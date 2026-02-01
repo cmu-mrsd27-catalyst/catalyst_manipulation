@@ -324,6 +324,70 @@ Configures OMPL (Open Motion Planning Library) motion planners.
 | Narrow passages | `KPIECE` | Good for constrained spaces |
 | Complex environments | `PRM` | Probabilistic roadmap |
 
+### Planner Comparison
+
+| Planner | Best For | Trade-off |
+|---------|----------|-----------|
+| **RRTConnect** | General use, fast planning | Not optimal paths |
+| **RRTstar** | Optimal/smooth paths | Slower, needs more time |
+| **PRM/PRMstar** | Repeated queries in same environment | Slow initial roadmap build |
+| **KPIECE/BKPIECE** | High-DOF robots, narrow passages | More complex |
+| **BiTRRT** | Cost-aware planning | Needs cost function |
+| **FMT/BFMT** | Near-optimal, faster than RRT* | Memory intensive |
+| **LazyPRM** | Quick approximate solutions | May need refinement |
+
+### Why RRTConnect is Default
+
+- **Bidirectional search** - Grows trees from both start and goal
+- **Fast for most cases** - Works well in open/semi-cluttered environments
+- **No parameter tuning** - Works out-of-the-box
+- **Industry standard** - Used by xarm_ros2 and most MoveIt configs
+
+### Changing the Planner
+
+**Option 1: In Python code**
+
+```python
+from moveit_commander import MoveGroupCommander
+
+move_group = MoveGroupCommander("xarm6")
+
+# Change planner
+move_group.set_planner_id("RRTstar")
+
+# Optional: increase planning time for optimal planners
+move_group.set_planning_time(5.0)
+
+# Plan and execute
+move_group.go()
+```
+
+**Option 2: In C++ code**
+
+```cpp
+#include <moveit/move_group_interface/move_group_interface.h>
+
+auto move_group = moveit::planning_interface::MoveGroupInterface(node, "xarm6");
+
+// Change planner
+move_group.setPlannerId("RRTstar");
+
+// Optional: increase planning time
+move_group.setPlanningTime(5.0);
+
+// Plan and execute
+move_group.move();
+```
+
+**Option 3: Change default in config file**
+
+Edit `config/ompl_planning.yaml`:
+
+```yaml
+xarm6:
+  default_planner_config: RRTstar  # Change from RRTConnect
+```
+
 ---
 
 ## Dependencies
