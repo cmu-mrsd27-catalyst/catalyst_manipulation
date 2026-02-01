@@ -22,8 +22,8 @@ xarm6_traj_controller:
 
 # Bio gripper controller
 bio_gripper_controller:
-  action_ns: gripper_action
-  type: GripperCommand
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
   default: true
   joints:
     # left_finger_joint mimics right_finger_joint, so only control right
