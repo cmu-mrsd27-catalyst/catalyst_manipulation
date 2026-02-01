@@ -11,6 +11,7 @@ find_package(ament_cmake REQUIRED)
 # Install SRDF and config directories
 install(DIRECTORY
   srdf
+  config
   DESTINATION share/${PROJECT_NAME}
 )
 

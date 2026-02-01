@@ -9,6 +9,8 @@ moveit_config/
 ├── CMakeLists.txt
 ├── package.xml
 ├── README.md
+├── config/
+│   └── kinematics.yaml
 └── srdf/
     └── catalyst_manipulator.srdf
 ```
@@ -183,6 +185,39 @@ Collision pairs that MoveIt should skip during planning:
 
 ---
 
+## Kinematics Configuration
+
+Location: `config/kinematics.yaml`
+
+Reference: Aligned with [xarm_ros2 kinematics](https://github.com/xArm-Developer/xarm_ros2/blob/humble/xarm_moveit_config/config/xarm6/kinematics.yaml)
+
+### Configuration
+
+```yaml
+xarm6:
+  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+  kinematics_solver_search_resolution: 0.005
+  kinematics_solver_timeout: 0.005
+  kinematics_solver_attempts: 3
+```
+
+### Parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `kinematics_solver` | `kdl_kinematics_plugin/KDLKinematicsPlugin` | KDL numerical IK solver |
+| `kinematics_solver_search_resolution` | `0.005` | Joint space discretization (radians) |
+| `kinematics_solver_timeout` | `0.005` | Max time per IK attempt (5ms) |
+| `kinematics_solver_attempts` | `3` | Number of IK solve attempts |
+
+### Notes
+
+- Only the `xarm6` group requires IK configuration
+- The `bio_gripper` group does not need IK (simple open/close motion)
+- Alternative solver `trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin` is available but commented out
+
+---
+
 ## Dependencies
 
 - `description` - Robot URDF/Xacro files
@@ -216,7 +251,7 @@ source install/setup.bash
 
 The following configuration files are planned:
 
-- [ ] `config/kinematics.yaml` - IK solver configuration
+- [x] `config/kinematics.yaml` - IK solver configuration
 - [ ] `config/joint_limits.yaml` - Joint limits for planning
 - [ ] `config/controllers.yaml` - ros2_control configuration
 - [ ] `config/ompl_planning.yaml` - OMPL planner parameters
