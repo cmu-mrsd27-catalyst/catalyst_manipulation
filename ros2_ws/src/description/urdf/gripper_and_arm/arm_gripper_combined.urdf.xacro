@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="catalyst_manipulator">
+
+  <!--
+    Catalyst Manipulator - Top-Level URDF
+    ======================================
+    Composes:
+      1. xArm-6 (from upstream xarm_description)
+      2. Bio gripper copy (from this package)
+  -->
+
+  <!-- ========== Arguments ========== -->
+  <xacro:arg name="prefix"    default=""/>
+  <xacro:arg name="hw_ns"     default="xarm"/>
+  <xacro:arg name="robot_ip"  default=""/>
+  <xacro:arg name="robot_sn"  default=""/>
+  <xacro:arg name="limited"   default="false"/>
+  <xacro:arg name="velocity_control" default="false"/>
+  <xacro:arg name="ros2_control_plugin"
+             default="uf_robot_hardware/UFRobotFakeSystemHardware"/>
+
+
+  <!-- ========== Include upstream xArm device macro ========== -->
+  <xacro:include filename="$(find xarm_description)/urdf/xarm_device_macro.xacro"/>
+
+  <!-- ========== Include our local bio gripper ========== -->
+  <xacro:include filename="$(find description)/urdf/gripper/bio_gripper.urdf.xacro"/>
+
+
+  <!-- ========== Instantiate xArm-6 (no stock gripper) ========== -->
+  <xacro:xarm_device
+    dof="6"
+    robot_type="xarm"
+    prefix="$(arg prefix)"
+    hw_ns="$(arg hw_ns)"
+    limited="$(arg limited)"
+    velocity_control="$(arg velocity_control)"
+    ros2_control_plugin="$(arg ros2_control_plugin)"
+    robot_ip="$(arg robot_ip)"
+    robot_sn="$(arg robot_sn)"
+    add_gripper="false"
+    add_vacuum_gripper="false"
+    add_bio_gripper="false"
+  />
+
+
+  <!-- ========== Attach our bio gripper to the arm ========== -->
+  <!--
+    The xarm6 kinematic chain ends at:
+      link6 -> (fixed joint_eef) -> link_eef
+
+    The bio_gripper_urdf macro uses attach_to / attach_xyz / attach_rpy
+    to create a fixed joint to the parent link.
+  -->
+  <xacro:bio_gripper_urdf
+    prefix="$(arg prefix)"
+    attach_to="$(arg prefix)link_eef"
+    attach_xyz="0 0 0"
+    attach_rpy="0 0 0"
+  />
+
+</robot>
