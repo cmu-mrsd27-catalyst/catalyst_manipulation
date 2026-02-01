@@ -65,7 +65,7 @@
   </group_state>
 
   <!-- ========== End Effector ========== -->
-  <end_effector name="bio_gripper" parent_link="link_tcp" group="bio_gripper" parent_group="xarm6"/>
+  <end_effector name="bio_gripper" parent_link="link_eef" group="bio_gripper" parent_group="xarm6"/>
 
   <!-- ========== Passive Joints ========== -->
   <!-- Left finger mimics right finger, so mark it as passive for planning -->

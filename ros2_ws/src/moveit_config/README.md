@@ -111,7 +111,7 @@ Pre-defined poses that can be commanded via MoveIt:
 | Attribute | Value | Description |
 |-----------|-------|-------------|
 | name | `bio_gripper` | End effector identifier |
-| parent_link | `link_tcp` | Tool Center Point (grasp location) |
+| parent_link | `link_eef` | End of arm chain (gripper attaches here) |
 | group | `bio_gripper` | Planning group for the gripper |
 | parent_group | `xarm6` | Arm that carries this gripper |
 
