@@ -14,6 +14,11 @@ moveit_config/
 │   ├── joint_limits.yaml
 │   ├── kinematics.yaml
 │   └── ompl_planning.yaml
+├── launch/
+│   ├── move_group.launch.py
+│   └── moveit_rviz.launch.py
+├── rviz/
+│   └── moveit.rviz
 └── srdf/
     └── catalyst_manipulator.srdf
 ```
@@ -390,6 +395,60 @@ xarm6:
 
 ---
 
+## Launch Files
+
+### move_group.launch.py
+
+Launches the MoveIt move_group node (motion planning server).
+
+**What it starts:**
+- `move_group` node - Motion planning and execution server
+- `robot_state_publisher` - Publishes robot state to TF
+
+**Usage:**
+```bash
+ros2 launch moveit_config move_group.launch.py
+```
+
+**Arguments:**
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `use_sim_time` | `false` | Use simulation clock |
+
+### moveit_rviz.launch.py
+
+Launches the full MoveIt setup with RViz visualization.
+
+**What it starts:**
+- `move_group` node - Motion planning and execution server
+- `robot_state_publisher` - Publishes robot state to TF
+- `joint_state_publisher_gui` - GUI for manual joint control
+- `rviz2` - Visualization with MoveIt plugin
+
+**Usage:**
+```bash
+ros2 launch moveit_config moveit_rviz.launch.py
+```
+
+**Arguments:**
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `use_sim_time` | `false` | Use simulation clock |
+| `rviz_config` | `rviz/moveit.rviz` | Path to RViz config |
+
+### RViz Configuration
+
+Location: `rviz/moveit.rviz`
+
+Pre-configured with:
+- MotionPlanning plugin (planning group: `xarm6`)
+- RobotModel display
+- TF display
+- Grid display
+- Orbit camera view
+
+---
+
 ## Dependencies
 
 - `description` - Robot URDF/Xacro files
@@ -419,13 +478,14 @@ source install/setup.bash
 
 ---
 
-## Future Additions
+## Completion Status
 
-The following configuration files are planned:
+All planned configuration files have been created:
 
 - [x] `config/kinematics.yaml` - IK solver configuration
 - [x] `config/joint_limits.yaml` - Joint limits for planning
 - [x] `config/controllers.yaml` - ros2_control configuration
 - [x] `config/ompl_planning.yaml` - OMPL planner parameters
-- [ ] `launch/move_group.launch.py` - MoveIt launch file
-- [ ] `launch/moveit_rviz.launch.py` - RViz with MoveIt plugin
+- [x] `launch/move_group.launch.py` - MoveIt launch file
+- [x] `launch/moveit_rviz.launch.py` - RViz with MoveIt plugin
+- [x] `rviz/moveit.rviz` - RViz configuration for MoveIt
