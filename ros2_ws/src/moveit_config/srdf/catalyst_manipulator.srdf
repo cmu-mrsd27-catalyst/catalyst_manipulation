@@ -30,6 +30,12 @@
     <joint name="left_finger_joint"/>
   </group>
 
+  <!-- Combined group: xArm-6 arm + bio gripper -->
+  <group name="xarm6_with_gripper">
+    <chain base_link="link_base" tip_link="link_eef"/>
+    <joint name="right_finger_joint"/>
+  </group>
+
   <!-- ========== Group States (Named Poses) ========== -->
 
   <!-- Arm home position (all joints at zero) -->

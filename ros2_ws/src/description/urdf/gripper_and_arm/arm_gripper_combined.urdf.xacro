@@ -23,8 +23,9 @@
   <!-- ========== Include upstream xArm device macro ========== -->
   <xacro:include filename="$(find xarm_description)/urdf/xarm_device_macro.xacro"/>
 
-  <!-- ========== Include our local bio gripper ========== -->
+    <!-- ========== Include our local bio gripper ========== -->
   <xacro:include filename="$(find description)/urdf/gripper/bio_gripper.urdf.xacro"/>
+  <xacro:include filename="$(find description)/urdf/gripper/bio_gripper.ros2_control.xacro"/>
 
 
   <!-- ========== Instantiate xArm-6 (no stock gripper) ========== -->
@@ -57,6 +58,12 @@
     attach_to="$(arg prefix)link_eef"
     attach_xyz="0 0 0"
     attach_rpy="0 0 0"
+  />
+
+  <!-- ========== Add ros2_control interfaces for the gripper ========== -->
+  <xacro:bio_gripper_ros2_control
+    prefix="$(arg prefix)"
+    ros2_control_plugin="$(arg ros2_control_plugin)"
   />
 
 </robot>
