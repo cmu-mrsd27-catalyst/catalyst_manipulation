@@ -10,7 +10,10 @@ moveit_config/
 ├── package.xml
 ├── README.md
 ├── config/
-│   └── kinematics.yaml
+│   ├── controllers.yaml
+│   ├── joint_limits.yaml
+│   ├── kinematics.yaml
+│   └── ompl_planning.yaml
 └── srdf/
     └── catalyst_manipulator.srdf
 ```
@@ -218,6 +221,111 @@ xarm6:
 
 ---
 
+## Joint Limits Configuration
+
+Location: `config/joint_limits.yaml`
+
+Reference: Aligned with [xarm_ros2 joint_limits](https://github.com/xArm-Developer/xarm_ros2/blob/humble/xarm_moveit_config/config/xarm6/joint_limits.yaml)
+
+Overrides URDF joint limits for MoveIt planning (more conservative for safety).
+
+### xArm-6 Joints (joint1-6)
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `has_velocity_limits` | `true` | Enable velocity limits |
+| `max_velocity` | `2.14` | Maximum velocity (rad/s) |
+| `has_acceleration_limits` | `true` | Enable acceleration limits |
+| `max_acceleration` | `10.0` | Maximum acceleration (rad/s²) |
+
+### Bio Gripper Joints (left/right_finger_joint)
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `has_velocity_limits` | `true` | Enable velocity limits |
+| `max_velocity` | `3.14` | Maximum velocity (rad/s) |
+| `has_acceleration_limits` | `true` | Enable acceleration limits |
+| `max_acceleration` | `10.0` | Maximum acceleration (rad/s²) |
+
+---
+
+## Controllers Configuration
+
+Location: `config/controllers.yaml`
+
+Reference: Aligned with [xarm_ros2 controllers](https://github.com/xArm-Developer/xarm_ros2/blob/humble/xarm_moveit_config/config/xarm6/controllers.yaml)
+
+Defines the controllers that MoveIt will use to execute trajectories.
+
+### xarm6_traj_controller
+
+```yaml
+xarm6_traj_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+```
+
+- **Type**: `FollowJointTrajectory` - Standard trajectory execution
+- **Joints**: All 6 arm joints
+
+### bio_gripper_controller
+
+```yaml
+bio_gripper_controller:
+  action_ns: gripper_action
+  type: GripperCommand
+  default: true
+  joints:
+    - right_finger_joint
+```
+
+- **Type**: `GripperCommand` - Gripper-specific control interface
+- **Joints**: Only `right_finger_joint` (left mimics right)
+
+---
+
+## OMPL Planning Configuration
+
+Location: `config/ompl_planning.yaml`
+
+Reference: Aligned with [xarm_ros2 ompl_planning](https://github.com/xArm-Developer/xarm_ros2/blob/humble/xarm_moveit_config/config/xarm6/ompl_planning.yaml)
+
+Configures OMPL (Open Motion Planning Library) motion planners.
+
+### Available Planners (23 total)
+
+| Category | Planners |
+|----------|----------|
+| Tree-based | SBL, EST, KPIECE, BKPIECE, LBKPIECE, RRT, RRTConnect, RRTstar, TRRT, BiTRRT, LBTRRT |
+| Graph-based | PRM, PRMstar, LazyPRM, LazyPRMstar, SPARS, SPARStwo |
+| Other | FMT, BFMT, PDST, STRIDE, BiEST, ProjEST |
+
+### Group Configuration
+
+| Group | Default Planner | Notes |
+|-------|-----------------|-------|
+| `xarm6` | `RRTConnect` | All 23 planners available |
+| `bio_gripper` | `RRTConnect` | Only RRTConnect (simple motion) |
+
+### Recommended Planners
+
+| Use Case | Planner | Description |
+|----------|---------|-------------|
+| Fast planning | `RRTConnect` | Bidirectional RRT, good for most cases |
+| Optimal paths | `RRTstar` | Asymptotically optimal, slower |
+| Narrow passages | `KPIECE` | Good for constrained spaces |
+| Complex environments | `PRM` | Probabilistic roadmap |
+
+---
+
 ## Dependencies
 
 - `description` - Robot URDF/Xacro files
@@ -252,8 +360,8 @@ source install/setup.bash
 The following configuration files are planned:
 
 - [x] `config/kinematics.yaml` - IK solver configuration
-- [ ] `config/joint_limits.yaml` - Joint limits for planning
-- [ ] `config/controllers.yaml` - ros2_control configuration
-- [ ] `config/ompl_planning.yaml` - OMPL planner parameters
+- [x] `config/joint_limits.yaml` - Joint limits for planning
+- [x] `config/controllers.yaml` - ros2_control configuration
+- [x] `config/ompl_planning.yaml` - OMPL planner parameters
 - [ ] `launch/move_group.launch.py` - MoveIt launch file
 - [ ] `launch/moveit_rviz.launch.py` - RViz with MoveIt plugin
