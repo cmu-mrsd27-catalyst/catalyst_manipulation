@@ -6,19 +6,6 @@
   This file adds the gazebo_ros2_control plugin for Gazebo Classic simulation.
   It bridges Gazebo physics with ros2_control controllers.
 
-  USAGE:
-    Include this file in your robot URDF and call the macro:
-
-    <xacro:include filename="$(find description)/urdf/gazebo/gazebo_ros2_control.xacro"/>
-    <xacro:gazebo_ros2_control_plugin
-      controller_config_package="catalyst_bringup"
-      controller_config_path="config/ros2_controllers.yaml"
-    />
-
-  PARAMETERS:
-    - controller_config_package: ROS2 package containing controller config
-    - controller_config_path: Path to controller YAML file within package
-
   NOTE:
     When using this plugin, pass ros2_control_plugin:=gazebo_ros2_control/GazeboSystem
     to the robot description xacro.
@@ -31,6 +18,8 @@
   ">
     <gazebo>
       <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+        <robot_param>robot_description</robot_param>
+        <robot_param_node>robot_state_publisher</robot_param_node>
         <parameters>$(find ${controller_config_package})/${controller_config_path}</parameters>
       </plugin>
     </gazebo>
