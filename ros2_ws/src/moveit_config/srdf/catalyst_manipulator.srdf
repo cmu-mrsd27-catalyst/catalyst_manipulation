@@ -24,10 +24,10 @@
     <chain base_link="link_base" tip_link="link_eef"/>
   </group>
 
-  <!-- Gripper group: Bio gripper finger joints -->
+  <!-- Gripper group: Bio gripper (only right finger - left is mimic) -->
   <group name="bio_gripper">
     <joint name="right_finger_joint"/>
-    <joint name="left_finger_joint"/>
+    <!-- Note: left_finger_joint is a mimic joint, not included in planning group -->
   </group>
 
   <!-- Combined group: xArm-6 arm + bio gripper -->
@@ -60,13 +60,11 @@
 
   <!-- Gripper open position -->
   <group_state name="open" group="bio_gripper">
-    <joint name="left_finger_joint" value="-0.04"/>
     <joint name="right_finger_joint" value="0.04"/>
   </group_state>
 
   <!-- Gripper closed position -->
   <group_state name="close" group="bio_gripper">
-    <joint name="left_finger_joint" value="0"/>
     <joint name="right_finger_joint" value="0"/>
   </group_state>
 
