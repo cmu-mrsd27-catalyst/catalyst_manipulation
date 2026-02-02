@@ -7,6 +7,14 @@
     Composes:
       1. xArm-6 (from upstream xarm_description)
       2. Bio gripper copy (from this package)
+      3. Gazebo plugins (optional, for simulation)
+
+    ARGUMENTS:
+      - use_gazebo: Set to "true" to include Gazebo-specific plugins
+      - ros2_control_plugin: Hardware plugin
+        - For fake: uf_robot_hardware/UFRobotFakeSystemHardware
+        - For Gazebo: gazebo_ros2_control/GazeboSystem
+        - For real: uf_robot_hardware/UFRobotSystemHardware
   -->
 
   <!-- ========== Arguments ========== -->
@@ -18,14 +26,23 @@
   <xacro:arg name="velocity_control" default="false"/>
   <xacro:arg name="ros2_control_plugin"
              default="uf_robot_hardware/UFRobotFakeSystemHardware"/>
+  <xacro:arg name="use_gazebo" default="false"/>
+
+  <!-- Property for conditional checks -->
+  <xacro:property name="use_gazebo" value="$(arg use_gazebo)"/>
+  <xacro:property name="is_ros2" value="true"/>
 
 
   <!-- ========== Include upstream xArm device macro ========== -->
   <xacro:include filename="$(find xarm_description)/urdf/xarm_device_macro.xacro"/>
 
-    <!-- ========== Include our local bio gripper ========== -->
+  <!-- ========== Include our local bio gripper ========== -->
   <xacro:include filename="$(find description)/urdf/gripper/bio_gripper.urdf.xacro"/>
   <xacro:include filename="$(find description)/urdf/gripper/bio_gripper.ros2_control.xacro"/>
+
+  <!-- ========== Gazebo-specific includes (conditional) ========== -->
+  <xacro:include filename="$(find description)/urdf/gripper/bio_gripper.gazebo.xacro"/>
+  <xacro:include filename="$(find description)/urdf/gazebo/gazebo_ros2_control.xacro"/>
 
 
   <!-- ========== Instantiate xArm-6 (no stock gripper) ========== -->
@@ -65,5 +82,42 @@
     prefix="$(arg prefix)"
     ros2_control_plugin="$(arg ros2_control_plugin)"
   />
+
+
+  <!-- ========== Gazebo-specific Configuration ========== -->
+  <!--
+    When use_gazebo:=true, this adds:
+    1. gazebo_ros2_control plugin (bridges Gazebo physics with ros2_control)
+    2. Gripper mimic joint plugin (syncs left finger with right finger)
+    3. Grasp fix plugin (helps with grasping objects in simulation)
+    4. Collision settings for gripper links
+  -->
+  <xacro:if value="${use_gazebo}">
+    <!-- Gazebo ros2_control plugin -->
+    <xacro:gazebo_ros2_control_plugin
+      controller_config_package="catalyst_bringup"
+      controller_config_path="config/ros2_controllers.yaml"
+    />
+
+    <!-- Gripper Gazebo settings (collision, etc.) -->
+    <xacro:bio_gripper_gazebo prefix="$(arg prefix)"/>
+
+    <!-- Mimic joint plugin for left finger following right finger -->
+    <xacro:mimic_joint_plugin_gazebo
+      name_prefix="bio_gripper_"
+      following_joint="$(arg prefix)right_finger_joint"
+      mimic_joint="$(arg prefix)left_finger_joint"
+      multiplier="-1.0"
+      offset="0.0"
+      max_effort="20.0"
+    />
+
+    <!-- Grasp fix plugin for realistic grasping -->
+    <xacro:bio_gazebo_grasp_fix
+      prefix="$(arg prefix)"
+      arm_name="bio_gripper"
+      palm_link="$(arg prefix)bio_gripper_base_link"
+    />
+  </xacro:if>
 
 </robot>
