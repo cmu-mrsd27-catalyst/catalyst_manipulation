@@ -9,6 +9,9 @@
   NOTE:
     When using this plugin, pass ros2_control_plugin:=gazebo_ros2_control/GazeboSystem
     to the robot description xacro.
+
+    Controller parameters are loaded via launch file, not through this plugin,
+    to avoid parsing issues with large robot_description parameters.
 -->
 <robot xmlns:xacro="http://ros.org/wiki/xacro">
 
@@ -20,7 +23,6 @@
       <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
         <robot_param>robot_description</robot_param>
         <robot_param_node>robot_state_publisher</robot_param_node>
-        <parameters>$(find ${controller_config_package})/${controller_config_path}</parameters>
       </plugin>
     </gazebo>
   </xacro:macro>

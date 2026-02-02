@@ -104,9 +104,6 @@ def generate_launch_description():
         value_type=str
     )
 
-    # Controller configuration path
-    controller_config = os.path.join(bringup_pkg, 'config', 'ros2_controllers.yaml')
-
     # ==================== NODES ====================
 
     # Robot state publisher
@@ -121,7 +118,10 @@ def generate_launch_description():
         ],
     )
 
-    # Start Gazebo server
+    # Controller configuration path for Gazebo ros2_control
+    controller_config = os.path.join(bringup_pkg, 'config', 'ros2_controllers.yaml')
+
+    # Start Gazebo server with controller parameters
     gazebo_server = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(gazebo_ros_pkg, 'launch', 'gzserver.launch.py')
@@ -129,6 +129,7 @@ def generate_launch_description():
         launch_arguments={
             'world': world,
             'pause': paused,
+            'extra_gazebo_args': '--ros-args --params-file ' + controller_config,
         }.items(),
     )
 
