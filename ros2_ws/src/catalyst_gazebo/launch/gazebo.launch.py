@@ -118,20 +118,15 @@ def generate_launch_description():
         ],
     )
 
-    # Start Gazebo server directly (avoiding parameter inheritance issues)
-    gazebo_server = ExecuteProcess(
-        cmd=['gzserver', '--verbose', world,
-             '-s', 'libgazebo_ros_init.so',
-             '-s', 'libgazebo_ros_factory.so'],
-        output='screen',
-    )
-
-    # Start Gazebo client (GUI)
-    gazebo_client = IncludeLaunchDescription(
+    # Start Gazebo using gazebo.launch.py (includes both server and client)
+    gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
-            os.path.join(gazebo_ros_pkg, 'launch', 'gzclient.launch.py')
+            os.path.join(gazebo_ros_pkg, 'launch', 'gazebo.launch.py')
         ]),
-        condition=IfCondition(gui),
+        launch_arguments={
+            'world': world,
+            'pause': paused,
+        }.items(),
     )
 
     # Spawn robot in Gazebo
@@ -214,8 +209,7 @@ def generate_launch_description():
         use_sim_time_arg,
 
         # Gazebo
-        gazebo_server,
-        gazebo_client,
+        gazebo,
 
         # Robot
         robot_state_publisher,
