@@ -95,8 +95,7 @@
   <xacro:if value="${use_gazebo}">
     <!-- Gazebo ros2_control plugin -->
     <xacro:gazebo_ros2_control_plugin
-      controller_config_package="catalyst_bringup"
-      controller_config_path="config/ros2_controllers.yaml"
+      ros2_control_params="$(find catalyst_bringup)/config/ros2_controllers.yaml"
     />
 
     <!-- Gripper Gazebo settings (collision, etc.) -->
