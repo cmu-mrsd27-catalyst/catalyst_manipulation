@@ -72,13 +72,27 @@ Connects the robot's base to the world frame. Required for MoveIt to know how th
 ```xml
 <group name="bio_gripper">
   <joint name="right_finger_joint"/>
-  <joint name="left_finger_joint"/>
+  <!-- Note: left_finger_joint is a mimic joint, not included in planning group -->
 </group>
 ```
 
 - **Type**: Joint group
-- **Joints**: 2 prismatic finger joints
+- **Joints**: 1 prismatic joint (`right_finger_joint`)
 - **Motion**: Linear open/close
+- **Note**: `left_finger_joint` is a mimic joint (mirrors `right_finger_joint`) and is excluded from the planning group
+
+#### xarm6_with_gripper (Combined)
+
+```xml
+<group name="xarm6_with_gripper">
+  <chain base_link="link_base" tip_link="link_eef"/>
+  <joint name="right_finger_joint"/>
+</group>
+```
+
+- **Type**: Combined kinematic chain + joint group
+- **DOF**: 7 (6 arm joints + 1 gripper joint)
+- **Use Case**: Plan arm and gripper motions together in a single motion plan
 
 ---
 
@@ -95,17 +109,19 @@ Pre-defined poses that can be commanded via MoveIt:
 
 #### Gripper Poses (bio_gripper)
 
-| State | Description | Values |
-|-------|-------------|--------|
-| `open` | Fingers fully extended | left = -0.04m, right = 0.04m |
-| `close` | Fingers closed | left = 0m, right = 0m |
+| State | Description | right_finger_joint |
+|-------|-------------|---------------------|
+| `open` | Fingers fully extended | 0.04m |
+| `close` | Fingers closed | 0m |
+
+**Note**: Only `right_finger_joint` is specified. The `left_finger_joint` automatically mirrors via URDF mimic relationship.
 
 ---
 
 ### 4. End Effector
 
 ```xml
-<end_effector name="bio_gripper" parent_link="link_tcp" group="bio_gripper" parent_group="xarm6"/>
+<end_effector name="bio_gripper" parent_link="link_eef" group="bio_gripper" parent_group="xarm6"/>
 ```
 
 | Attribute | Value | Description |
@@ -243,14 +259,16 @@ Overrides URDF joint limits for MoveIt planning (more conservative for safety).
 | `has_acceleration_limits` | `true` | Enable acceleration limits |
 | `max_acceleration` | `10.0` | Maximum acceleration (rad/s²) |
 
-### Bio Gripper Joints (left/right_finger_joint)
+### Bio Gripper Joints (right_finger_joint)
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `has_velocity_limits` | `true` | Enable velocity limits |
-| `max_velocity` | `3.14` | Maximum velocity (rad/s) |
+| `max_velocity` | `3.14` | Maximum velocity (m/s) |
 | `has_acceleration_limits` | `true` | Enable acceleration limits |
-| `max_acceleration` | `10.0` | Maximum acceleration (rad/s²) |
+| `max_acceleration` | `10.0` | Maximum acceleration (m/s²) |
+
+**Note**: Only `right_finger_joint` needs limits. `left_finger_joint` is a mimic joint handled by `robot_state_publisher`.
 
 ---
 
@@ -285,15 +303,15 @@ xarm6_traj_controller:
 
 ```yaml
 bio_gripper_controller:
-  action_ns: gripper_action
-  type: GripperCommand
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
   default: true
   joints:
     - right_finger_joint
 ```
 
-- **Type**: `GripperCommand` - Gripper-specific control interface
-- **Joints**: Only `right_finger_joint` (left mimics right)
+- **Type**: `FollowJointTrajectory` - Standard trajectory execution (same as arm)
+- **Joints**: Only `right_finger_joint` (left mimics right via URDF)
 
 ---
 
@@ -319,6 +337,7 @@ Configures OMPL (Open Motion Planning Library) motion planners.
 |-------|-----------------|-------|
 | `xarm6` | `RRTConnect` | All 23 planners available |
 | `bio_gripper` | `RRTConnect` | Only RRTConnect (simple motion) |
+| `xarm6_with_gripper` | `RRTConnect` | Combined arm + gripper planning |
 
 ### Recommended Planners
 
@@ -478,14 +497,52 @@ source install/setup.bash
 
 ---
 
+## Mimic Joints
+
+The Bio Gripper uses mimic joints for symmetric finger motion:
+
+| Joint | Type | Behavior |
+|-------|------|----------|
+| `right_finger_joint` | Primary | Controlled by ros2_control |
+| `left_finger_joint` | Mimic | Mirrors `right_finger_joint` with multiplier -1 |
+
+**Important Notes:**
+
+1. **Planning groups**: Only `right_finger_joint` is included in the `bio_gripper` planning group
+2. **ros2_control**: Only `right_finger_joint` has hardware interfaces; `left_finger_joint` is not registered
+3. **robot_state_publisher**: Handles the mimic relationship and publishes both finger TF frames
+4. **MoveIt**: `left_finger_joint` is marked as passive in SRDF
+
+This is the correct architecture for mimic joints in ROS2/MoveIt2.
+
+---
+
 ## Completion Status
 
 All planned configuration files have been created:
 
 - [x] `config/kinematics.yaml` - IK solver configuration
 - [x] `config/joint_limits.yaml` - Joint limits for planning
-- [x] `config/controllers.yaml` - ros2_control configuration
+- [x] `config/controllers.yaml` - MoveIt controller configuration
 - [x] `config/ompl_planning.yaml` - OMPL planner parameters
 - [x] `launch/move_group.launch.py` - MoveIt launch file
 - [x] `launch/moveit_rviz.launch.py` - RViz with MoveIt plugin
 - [x] `rviz/moveit.rviz` - RViz configuration for MoveIt
+
+---
+
+## Running with Fake Controllers
+
+To test MoveIt with simulated hardware (no real robot), use the `catalyst_bringup` package:
+
+```bash
+# Launch full demo with fake controllers
+ros2 launch catalyst_bringup demo.launch.py
+
+# This starts:
+# - ros2_control with fake hardware
+# - MoveIt move_group
+# - RViz with MoveIt plugin
+```
+
+See the `catalyst_bringup` package README for more details.
