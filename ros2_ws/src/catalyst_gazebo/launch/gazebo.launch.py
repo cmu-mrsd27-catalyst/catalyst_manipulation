@@ -118,15 +118,12 @@ def generate_launch_description():
         ],
     )
 
-    # Start Gazebo server
-    gazebo_server = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            os.path.join(gazebo_ros_pkg, 'launch', 'gzserver.launch.py')
-        ]),
-        launch_arguments={
-            'world': world,
-            'pause': paused,
-        }.items(),
+    # Start Gazebo server directly (avoiding parameter inheritance issues)
+    gazebo_server = ExecuteProcess(
+        cmd=['gzserver', '--verbose', world,
+             '-s', 'libgazebo_ros_init.so',
+             '-s', 'libgazebo_ros_factory.so'],
+        output='screen',
     )
 
     # Start Gazebo client (GUI)
