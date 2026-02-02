@@ -28,6 +28,7 @@ from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
     RegisterEventHandler,
+    SetEnvironmentVariable,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
@@ -35,6 +36,7 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command,
+    EnvironmentVariable,
     FindExecutable,
     LaunchConfiguration,
     PathJoinSubstitution,
@@ -50,6 +52,13 @@ def generate_launch_description():
     description_pkg = get_package_share_directory('description')
     bringup_pkg = get_package_share_directory('catalyst_bringup')
     gazebo_ros_pkg = get_package_share_directory('gazebo_ros')
+
+    # Set Gazebo model path to include our models
+    models_path = os.path.join(gazebo_pkg, 'models')
+    gazebo_model_path = SetEnvironmentVariable(
+        'GAZEBO_MODEL_PATH',
+        [EnvironmentVariable('GAZEBO_MODEL_PATH', default_value=''), ':', models_path]
+    )
 
     # Launch arguments
     world_arg = DeclareLaunchArgument(
@@ -201,6 +210,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        # Environment
+        gazebo_model_path,
+
         # Arguments
         world_arg,
         paused_arg,
