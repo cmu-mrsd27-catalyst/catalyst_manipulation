@@ -24,12 +24,15 @@ ARGUMENTS:
 """
 
 import os
+import tempfile
+import subprocess
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
     SetEnvironmentVariable,
     TimerAction,
@@ -101,27 +104,37 @@ def generate_launch_description():
     rviz = LaunchConfiguration('rviz')
     use_sim_time = LaunchConfiguration('use_sim_time')
 
-    # Robot description with Gazebo plugins
-    robot_description_content = ParameterValue(
-        Command([
-            FindExecutable(name='xacro'), ' ',
-            PathJoinSubstitution([
-                description_pkg, 'urdf', 'gripper_and_arm', 'arm_gripper_combined.urdf.xacro'
-            ]),
-            ' use_gazebo:=true',
-            ' ros2_control_plugin:=gazebo_ros2_control/GazeboSystem',
-        ]),
-        value_type=str
+    # Generate URDF and write to a temporary file
+    # This avoids passing large XML as a parameter which causes gazebo_ros2_control issues
+    xacro_file = os.path.join(
+        description_pkg, 'urdf', 'gripper_and_arm', 'arm_gripper_combined.urdf.xacro'
     )
 
+    # Generate URDF content
+    urdf_content = subprocess.check_output([
+        'xacro', xacro_file,
+        'use_gazebo:=true',
+        'ros2_control_plugin:=gazebo_ros2_control/GazeboSystem'
+    ]).decode('utf-8')
+
+    # Write to a temporary file that persists for the session
+    urdf_file = tempfile.NamedTemporaryFile(
+        mode='w',
+        prefix='catalyst_robot_',
+        suffix='.urdf',
+        delete=False
+    )
+    urdf_file.write(urdf_content)
+    urdf_file.close()
+    urdf_path = urdf_file.name
+
     # Load SRDF
-    robot_description_semantic_content = Command([
-        FindExecutable(name='cat'), ' ',
-        PathJoinSubstitution([moveit_config_pkg, 'srdf', 'catalyst_manipulator.srdf'])
-    ])
+    srdf_file = os.path.join(moveit_config_pkg, 'srdf', 'catalyst_manipulator.srdf')
+    with open(srdf_file, 'r') as f:
+        robot_description_semantic_content = f.read()
 
     robot_description_semantic = {
-        'robot_description_semantic': ParameterValue(robot_description_semantic_content, value_type=str)
+        'robot_description_semantic': robot_description_semantic_content
     }
 
     # Kinematics configuration
@@ -141,32 +154,33 @@ def generate_launch_description():
 
     # ==================== NODES ====================
 
-    # Robot state publisher
+    # Robot state publisher - reads URDF from file
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         name='robot_state_publisher',
         output='screen',
         parameters=[
-            {'robot_description': robot_description_content},
+            {'robot_description': urdf_content},
             {'use_sim_time': use_sim_time},
         ],
     )
 
-    # Start Gazebo using gazebo.launch.py (includes both server and client)
-    gazebo = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            os.path.join(gazebo_ros_pkg, 'launch', 'gazebo.launch.py')
-        ]),
-        launch_arguments={
-            'world': world,
-            'pause': paused,
-        }.items(),
+    # Start Gazebo (gzserver and gzclient separately to avoid parameter issues)
+    gazebo_server = ExecuteProcess(
+        cmd=['gzserver', '--verbose', world,
+             '-s', 'libgazebo_ros_init.so',
+             '-s', 'libgazebo_ros_factory.so'],
+        output='screen',
     )
 
-    # Note: gazebo.launch.py includes both gzserver and gzclient
+    gazebo_client = ExecuteProcess(
+        cmd=['gzclient'],
+        output='screen',
+        condition=IfCondition(gui),
+    )
 
-    # Spawn robot in Gazebo (on top of stand at Z=0.8)
+    # Spawn robot in Gazebo from file (not from parameter)
     spawn_robot = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
@@ -174,7 +188,7 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '-entity', 'catalyst_manipulator',
-            '-topic', 'robot_description',
+            '-file', urdf_path,  # Use file instead of topic
             '-x', '0.0',
             '-y', '0.0',
             '-z', '0.8',
@@ -218,7 +232,7 @@ def generate_launch_description():
         executable='move_group',
         output='screen',
         parameters=[
-            {'robot_description': robot_description_content},
+            {'robot_description': urdf_content},
             robot_description_semantic,
             kinematics_yaml,
             ompl_planning_yaml,
@@ -247,7 +261,7 @@ def generate_launch_description():
         output='screen',
         arguments=['-d', rviz_config],
         parameters=[
-            {'robot_description': robot_description_content},
+            {'robot_description': urdf_content},
             robot_description_semantic,
             kinematics_yaml,
             {'use_sim_time': use_sim_time},
@@ -307,7 +321,8 @@ def generate_launch_description():
         use_sim_time_arg,
 
         # Gazebo
-        gazebo,
+        gazebo_server,
+        gazebo_client,
 
         # Robot
         robot_state_publisher,
