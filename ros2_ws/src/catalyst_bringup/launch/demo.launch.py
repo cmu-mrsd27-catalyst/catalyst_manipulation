@@ -1,26 +1,37 @@
 """
-Full demo launch file for Catalyst Manipulator.
+Unified demo launch file for Catalyst Manipulator.
 
-Launches everything needed for MoveIt planning and execution:
-- Robot bringup (fake hardware + controllers)
-- MoveIt move_group
-- RViz with MoveIt plugin
+Supports three modes:
+  sim:=false   (default) — Real xArm hardware via UFRobotSystemHardware
+  sim:=fake              — Fake hardware for quick MoveIt testing
+  sim:=gazebo            — Full Gazebo simulation
 
 Usage:
-  ros2 launch catalyst_bringup demo.launch.py
+  ros2 launch catalyst_bringup demo.launch.py sim:=fake
+  ros2 launch catalyst_bringup demo.launch.py sim:=gazebo
+  ros2 launch catalyst_bringup demo.launch.py robot_ip:=192.168.1.212
 """
 
+import copy
 import os
+import re
+import subprocess
+import sys
+import tempfile
 import yaml
+
+from ament_index_python.packages import get_package_share_directory, get_package_prefix
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    RegisterEventHandler,
+    SetEnvironmentVariable,
+)
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
-from ament_index_python.packages import get_package_share_directory
 
 
 def load_yaml(package_name, file_path):
@@ -31,59 +42,99 @@ def load_yaml(package_name, file_path):
         return yaml.safe_load(file)
 
 
+def _get_launch_arg(name, default):
+    """Parse a launch argument from sys.argv (key:=value format)."""
+    for arg in sys.argv:
+        if arg.startswith(f'{name}:='):
+            return arg.split(':=', 1)[1]
+    return default
+
+
 def generate_launch_description():
-    # Package paths
-    description_pkg = FindPackageShare('description')
+    # ── Resolve mode at description-generation time ──
+    # This avoids OpaqueFunction, which can leak parameters to ExecuteProcess
+    # children (causing gazebo_ros2_control parser errors).
+    sim_mode = _get_launch_arg('sim', 'false')
+    robot_ip = _get_launch_arg('robot_ip', '192.168.1.212')
+
+    is_real = (sim_mode == 'false')
+    is_fake = (sim_mode == 'fake')
+    is_gazebo = (sim_mode == 'gazebo')
+    use_sim_time = is_gazebo
+
+    # ── Package paths ──
+    description_pkg = get_package_share_directory('description')
+    bringup_pkg = get_package_share_directory('catalyst_bringup')
     moveit_config_pkg = get_package_share_directory('moveit_config')
-    bringup_pkg = FindPackageShare('catalyst_bringup')
 
-    # Launch arguments
-    use_sim_time = LaunchConfiguration('use_sim_time')
-    rviz_config = LaunchConfiguration('rviz_config')
+    # ── Determine ros2_control plugin ──
+    if is_real:
+        plugin = 'uf_robot_hardware/UFRobotSystemHardware'
+    elif is_fake:
+        plugin = 'uf_robot_hardware/UFRobotFakeSystemHardware'
+    else:
+        plugin = 'gazebo_ros2_control/GazeboSystem'
 
-    declare_use_sim_time = DeclareLaunchArgument(
-        'use_sim_time',
-        default_value='false',
-        description='Use simulation clock'
+    # ── Generate URDF via xacro ──
+    xacro_file = os.path.join(
+        description_pkg, 'urdf', 'gripper_and_arm', 'arm_gripper_combined.urdf.xacro'
     )
+    xacro_args = [
+        'xacro', xacro_file,
+        f'ros2_control_plugin:={plugin}',
+        f'use_gazebo:={str(is_gazebo).lower()}',
+        f'add_gripper_ros2_control:={str(not is_real).lower()}',
+    ]
+    if is_real:
+        xacro_args.append(f'robot_ip:={robot_ip}')
 
-    declare_rviz_config = DeclareLaunchArgument(
-        'rviz_config',
-        default_value=os.path.join(moveit_config_pkg, 'rviz', 'moveit.rviz'),
-        description='Path to RViz config'
-    )
+    urdf_content = subprocess.check_output(xacro_args).decode('utf-8')
 
-    # Robot description (URDF) with fake hardware
-    robot_description_content = ParameterValue(
-        Command([
-            'xacro ',
-            PathJoinSubstitution([
-                description_pkg, 'urdf', 'gripper_and_arm', 'arm_gripper_combined.urdf.xacro'
-            ]),
-            ' ros2_control_plugin:=uf_robot_hardware/UFRobotFakeSystemHardware',
-        ]),
-        value_type=str
-    )
-    robot_description = {'robot_description': robot_description_content}
+    # Strip XML comments — gazebo_ros2_control's parameter parser chokes on them
+    urdf_content = re.sub(r'<!--.*?-->', '', urdf_content, flags=re.DOTALL)
 
-    # Robot description semantic (SRDF)
+    # Write temp URDF file for Gazebo spawning
+    urdf_path = None
+    if is_gazebo:
+        urdf_file = tempfile.NamedTemporaryFile(
+            mode='w', prefix='catalyst_robot_', suffix='.urdf', delete=False
+        )
+        urdf_file.write(urdf_content)
+        urdf_file.close()
+        urdf_path = urdf_file.name
+
+    # ── Controller config ──
+    if is_real:
+        controller_config_path = os.path.join(bringup_pkg, 'config', 'ros2_controllers_real.yaml')
+    else:
+        controller_config_path = os.path.join(bringup_pkg, 'config', 'ros2_controllers.yaml')
+
+    # ── MoveIt config ──
     srdf_path = os.path.join(moveit_config_pkg, 'srdf', 'catalyst_manipulator.srdf')
-    with open(srdf_path, 'r') as file:
-        robot_description_semantic = {'robot_description_semantic': file.read()}
+    with open(srdf_path, 'r') as f:
+        robot_description_semantic = {'robot_description_semantic': f.read()}
 
-    # Load MoveIt configs
     kinematics_yaml = load_yaml('moveit_config', 'config/kinematics.yaml')
     joint_limits_yaml = load_yaml('moveit_config', 'config/joint_limits.yaml')
     ompl_planning_yaml = load_yaml('moveit_config', 'config/ompl_planning.yaml')
     controllers_yaml = load_yaml('moveit_config', 'config/controllers.yaml')
 
-    # MoveIt parameters
+    # In real mode, remove bio_gripper_controller from MoveIt controllers
+    if is_real:
+        controllers_yaml = copy.deepcopy(controllers_yaml)
+        if 'controller_names' in controllers_yaml:
+            controllers_yaml['controller_names'] = [
+                c for c in controllers_yaml['controller_names']
+                if c != 'bio_gripper_controller'
+            ]
+        controllers_yaml.pop('bio_gripper_controller', None)
+
     joint_limits = {'robot_description_planning': joint_limits_yaml}
     ompl_planning = {'move_group': {'planning_plugin': 'ompl_interface/OMPLPlanner'}}
     ompl_planning['move_group'].update(ompl_planning_yaml)
 
     trajectory_execution = {
-        'moveit_manage_controllers': False,  # Controllers managed by ros2_control
+        'moveit_manage_controllers': False,
         'trajectory_execution.allowed_execution_duration_scaling': 1.2,
         'trajectory_execution.allowed_goal_duration_margin': 0.5,
         'trajectory_execution.allowed_start_tolerance': 0.01,
@@ -101,58 +152,124 @@ def generate_launch_description():
         'publish_transforms_updates': True,
     }
 
-    # Controller config path
-    controller_config = PathJoinSubstitution([
-        bringup_pkg, 'config', 'ros2_controllers.yaml'
-    ])
+    # ── RViz config ──
+    rviz_config = os.path.join(moveit_config_pkg, 'rviz', 'moveit.rviz')
+    rviz = LaunchConfiguration('rviz')
 
-    # ========== Nodes ==========
+    # ==================== NODES ====================
+    actions = []
 
     # Robot state publisher
     robot_state_publisher_node = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        parameters=[robot_description, {'use_sim_time': use_sim_time}],
+        name='robot_state_publisher',
         output='screen',
+        parameters=[
+            {'robot_description': urdf_content},
+            {'use_sim_time': use_sim_time},
+        ],
     )
+    actions.append(robot_state_publisher_node)
 
-    # ros2_control controller manager
-    controller_manager_node = Node(
-        package='controller_manager',
-        executable='ros2_control_node',
-        parameters=[robot_description, controller_config, {'use_sim_time': use_sim_time}],
-        output='screen',
-    )
+    # ros2_control_node (not needed for Gazebo — plugin handles it)
+    if not is_gazebo:
+        controller_manager_node = Node(
+            package='controller_manager',
+            executable='ros2_control_node',
+            parameters=[
+                {'robot_description': urdf_content},
+                controller_config_path,
+                {'use_sim_time': use_sim_time},
+            ],
+            output='screen',
+        )
+        actions.append(controller_manager_node)
 
-    # Spawn controllers
+    # Joint state publisher for real mode
+    if is_real:
+        joint_state_publisher_node = Node(
+            package='joint_state_publisher',
+            executable='joint_state_publisher',
+            parameters=[{'use_sim_time': use_sim_time}],
+            remappings=[('joint_states', '/joint_states')],
+            output='screen',
+        )
+        actions.append(joint_state_publisher_node)
+
+    # ── Gazebo nodes ──
+    if is_gazebo:
+        gazebo_pkg = get_package_share_directory('catalyst_gazebo')
+        models_path = os.path.join(gazebo_pkg, 'models')
+        plugin_path = os.path.join(get_package_prefix('xarm_gazebo'), 'lib')
+
+        gazebo_model_path = SetEnvironmentVariable(
+            'GAZEBO_MODEL_PATH',
+            [models_path, ':', EnvironmentVariable('GAZEBO_MODEL_PATH', default_value='')]
+        )
+        gazebo_plugin_path = SetEnvironmentVariable(
+            'GAZEBO_PLUGIN_PATH',
+            [EnvironmentVariable('GAZEBO_PLUGIN_PATH', default_value=''), ':', plugin_path]
+        )
+        actions.extend([gazebo_model_path, gazebo_plugin_path])
+
+        world_file = os.path.join(gazebo_pkg, 'worlds', 'catalyst_workspace.world')
+
+        gazebo_server = ExecuteProcess(
+            cmd=['env', '-u', 'RCL_ARGUMENTS', '-u', 'ROS_ARGS',
+                 'gzserver', '--verbose', world_file,
+                 '-s', 'libgazebo_ros_init.so',
+                 '-s', 'libgazebo_ros_factory.so'],
+            output='screen',
+            additional_env={'RCL_ARGUMENTS': '', 'ROS_ARGS': ''},
+        )
+
+        gazebo_client = ExecuteProcess(
+            cmd=['env', '-u', 'RCL_ARGUMENTS', '-u', 'ROS_ARGS', 'gzclient'],
+            output='screen',
+            additional_env={'RCL_ARGUMENTS': '', 'ROS_ARGS': ''},
+        )
+
+        spawn_robot = Node(
+            package='gazebo_ros',
+            executable='spawn_entity.py',
+            name='spawn_catalyst_manipulator',
+            output='screen',
+            arguments=[
+                '-entity', 'catalyst_manipulator',
+                '-file', urdf_path,
+                '-x', '0.0', '-y', '0.0', '-z', '0.8',
+                '-R', '0.0', '-P', '0.0', '-Y', '0.0',
+            ],
+            parameters=[{'use_sim_time': use_sim_time}],
+        )
+
+        actions.extend([gazebo_server, gazebo_client, spawn_robot])
+
+    # ── Controller spawners ──
     joint_state_broadcaster_spawner = Node(
         package='controller_manager',
         executable='spawner',
-        arguments=['joint_state_broadcaster', '-c', '/controller_manager'],
+        arguments=['joint_state_broadcaster', '--controller-manager', '/controller_manager'],
         output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
     )
 
     xarm6_controller_spawner = Node(
         package='controller_manager',
         executable='spawner',
-        arguments=['xarm6_traj_controller', '-c', '/controller_manager'],
+        arguments=['xarm6_traj_controller', '--controller-manager', '/controller_manager'],
         output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
     )
 
-    gripper_controller_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=['bio_gripper_controller', '-c', '/controller_manager'],
-        output='screen',
-    )
-
-    # MoveIt move_group
+    # ── MoveIt move_group ──
     move_group_node = Node(
         package='moveit_ros_move_group',
         executable='move_group',
         output='screen',
         parameters=[
-            robot_description,
+            {'robot_description': urdf_content},
             robot_description_semantic,
             kinematics_yaml,
             joint_limits,
@@ -164,7 +281,7 @@ def generate_launch_description():
         ],
     )
 
-    # RViz
+    # ── RViz ──
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -172,52 +289,87 @@ def generate_launch_description():
         output='screen',
         arguments=['-d', rviz_config],
         parameters=[
-            robot_description,
+            {'robot_description': urdf_content},
             robot_description_semantic,
             kinematics_yaml,
             {'use_sim_time': use_sim_time},
         ],
+        condition=IfCondition(rviz),
     )
 
-    # Delay controller spawning
-    delay_xarm6_controller = RegisterEventHandler(
+    # ==================== EVENT SEQUENCING ====================
+    if is_gazebo:
+        # Gazebo: spawn_robot → joint_state_broadcaster → controllers → move_group + rviz
+        delayed_jsb = RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=spawn_robot,
+                on_exit=[joint_state_broadcaster_spawner],
+            )
+        )
+        actions.append(delayed_jsb)
+    else:
+        # Fake/Real: launch joint_state_broadcaster immediately
+        actions.append(joint_state_broadcaster_spawner)
+
+    # arm controller after joint_state_broadcaster
+    delayed_arm_controller = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=joint_state_broadcaster_spawner,
             on_exit=[xarm6_controller_spawner],
         )
     )
+    actions.append(delayed_arm_controller)
 
-    delay_gripper_controller = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=joint_state_broadcaster_spawner,
-            on_exit=[gripper_controller_spawner],
+    # gripper controller after joint_state_broadcaster (sim modes only)
+    if not is_real:
+        gripper_controller_spawner = Node(
+            package='controller_manager',
+            executable='spawner',
+            arguments=['bio_gripper_controller', '--controller-manager', '/controller_manager'],
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time}],
         )
-    )
+        delayed_gripper_controller = RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[gripper_controller_spawner],
+            )
+        )
+        actions.append(delayed_gripper_controller)
 
-    # Delay move_group until controllers are ready
-    delay_move_group = RegisterEventHandler(
+    # move_group + rviz after arm controller is ready
+    delayed_move_group = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=xarm6_controller_spawner,
             on_exit=[move_group_node],
         )
     )
 
-    # Delay RViz until move_group is ready
-    delay_rviz = RegisterEventHandler(
+    delayed_rviz = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=xarm6_controller_spawner,
             on_exit=[rviz_node],
         )
     )
 
+    actions.append(delayed_move_group)
+    actions.append(delayed_rviz)
+
     return LaunchDescription([
-        declare_use_sim_time,
-        declare_rviz_config,
-        robot_state_publisher_node,
-        controller_manager_node,
-        joint_state_broadcaster_spawner,
-        delay_xarm6_controller,
-        delay_gripper_controller,
-        delay_move_group,
-        delay_rviz,
-    ])
+        DeclareLaunchArgument(
+            'sim',
+            default_value='false',
+            choices=['false', 'fake', 'gazebo'],
+            description='Simulation mode: false (real hardware), fake, or gazebo',
+        ),
+        DeclareLaunchArgument(
+            'robot_ip',
+            default_value='192.168.1.212',
+            description='xArm IP address (only used when sim:=false)',
+        ),
+        DeclareLaunchArgument(
+            'rviz',
+            default_value='true',
+            description='Launch RViz',
+        ),
+    ] + actions)

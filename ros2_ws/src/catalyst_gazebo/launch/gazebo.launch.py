@@ -21,7 +21,9 @@ ARGUMENTS:
 """
 
 import os
-from ament_index_python.packages import get_package_share_directory
+import re
+import subprocess
+from ament_index_python.packages import get_package_share_directory, get_package_prefix
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -35,17 +37,10 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    Command,
     EnvironmentVariable,
-    FindExecutable,
     LaunchConfiguration,
-    PathJoinSubstitution,
-    PythonExpression,
 )
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
-
-
 def generate_launch_description():
     # Package directories
     gazebo_pkg = get_package_share_directory('catalyst_gazebo')
@@ -57,8 +52,17 @@ def generate_launch_description():
     models_path = os.path.join(gazebo_pkg, 'models')
     gazebo_model_path = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
-        [EnvironmentVariable('GAZEBO_MODEL_PATH', default_value=''), ':', models_path]
+        [models_path, ':', EnvironmentVariable('GAZEBO_MODEL_PATH', default_value='')]
     )
+    # Ensure Gazebo can find locally built plugins (e.g., xarm_gazebo mimic joint plugin)
+    plugin_path = os.path.join(get_package_prefix('xarm_gazebo'), 'lib')
+    gazebo_plugin_path = SetEnvironmentVariable(
+        'GAZEBO_PLUGIN_PATH',
+        [EnvironmentVariable('GAZEBO_PLUGIN_PATH', default_value=''), ':', plugin_path]
+    )
+    # Clear inherited ROS arguments to avoid gazebo_ros2_control parser errors
+    clear_rcl_arguments = SetEnvironmentVariable('RCL_ARGUMENTS', '')
+    clear_ros_args = SetEnvironmentVariable('ROS_ARGS', '')
 
     # Launch arguments
     world_arg = DeclareLaunchArgument(
@@ -92,17 +96,17 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
 
     # Robot description with Gazebo plugins
-    robot_description_content = ParameterValue(
-        Command([
-            FindExecutable(name='xacro'), ' ',
-            PathJoinSubstitution([
-                description_pkg, 'urdf', 'gripper_and_arm', 'arm_gripper_combined.urdf.xacro'
-            ]),
-            ' use_gazebo:=true',
-            ' ros2_control_plugin:=gazebo_ros2_control/GazeboSystem',
-        ]),
-        value_type=str
+    xacro_file = os.path.join(
+        description_pkg, 'urdf', 'gripper_and_arm', 'arm_gripper_combined.urdf.xacro'
     )
+    urdf_content = subprocess.check_output([
+        'xacro', xacro_file,
+        'use_gazebo:=true',
+        'ros2_control_plugin:=gazebo_ros2_control/GazeboSystem',
+    ]).decode('utf-8')
+    # Strip XML comments to avoid ROS arg parser errors
+    urdf_content = re.sub(r'<!--.*?-->', '', urdf_content, flags=re.DOTALL)
+    robot_description = {'robot_description': urdf_content}
 
     # ==================== NODES ====================
 
@@ -113,7 +117,7 @@ def generate_launch_description():
         name='robot_state_publisher',
         output='screen',
         parameters=[
-            {'robot_description': robot_description_content},
+            robot_description,
             {'use_sim_time': use_sim_time},
         ],
     )
@@ -201,6 +205,9 @@ def generate_launch_description():
     return LaunchDescription([
         # Environment
         gazebo_model_path,
+        gazebo_plugin_path,
+        clear_rcl_arguments,
+        clear_ros_args,
 
         # Arguments
         world_arg,

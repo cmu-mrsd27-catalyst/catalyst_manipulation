@@ -86,7 +86,7 @@
 
     <!-- LEG 1: Front-Left (-X, +Y) -->
     <link name="leg_1">
-      <!-- Pose: x, y, z(center of leg), roll, pitch, yaw -->
+      <-- Pose: x, y, z(center of leg), roll, pitch, yaw -->
       <!-- Z = -(table_top_thickness + leg_height/2) = -(0.03 + 0.77/2) = -0.415 -->
       <pose>-0.35 0.25 -0.415 0 0 0</pose>
 

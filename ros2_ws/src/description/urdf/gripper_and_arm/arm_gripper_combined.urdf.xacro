@@ -20,16 +20,18 @@
   <!-- ========== Arguments ========== -->
   <xacro:arg name="prefix"    default=""/>
   <xacro:arg name="hw_ns"     default="xarm"/>
-  <xacro:arg name="robot_ip"  default=""/>
+  <xacro:arg name="robot_ip"  default="192.168.1.212"/>
   <xacro:arg name="robot_sn"  default=""/>
   <xacro:arg name="limited"   default="false"/>
   <xacro:arg name="velocity_control" default="false"/>
   <xacro:arg name="ros2_control_plugin"
              default="uf_robot_hardware/UFRobotFakeSystemHardware"/>
   <xacro:arg name="use_gazebo" default="false"/>
+  <xacro:arg name="add_gripper_ros2_control" default="true"/>
 
   <!-- Property for conditional checks -->
   <xacro:property name="use_gazebo" value="$(arg use_gazebo)"/>
+  <xacro:property name="add_gripper_ros2_control_val" value="$(arg add_gripper_ros2_control)"/>
   <xacro:property name="is_ros2" value="true"/>
 
 
@@ -77,11 +79,14 @@
     attach_rpy="0 0 0"
   />
 
-  <!-- ========== Add ros2_control interfaces for the gripper ========== -->
-  <xacro:bio_gripper_ros2_control
-    prefix="$(arg prefix)"
-    ros2_control_plugin="$(arg ros2_control_plugin)"
-  />
+  <!-- ========== Add ros2_control interfaces for the gripper (conditional) ========== -->
+  <!-- Skipped in real mode: the Dynamixel gripper is controlled independently -->
+  <xacro:if value="${add_gripper_ros2_control_val}">
+    <xacro:bio_gripper_ros2_control
+      prefix="$(arg prefix)"
+      ros2_control_plugin="$(arg ros2_control_plugin)"
+    />
+  </xacro:if>
 
 
   <!-- ========== Gazebo-specific Configuration ========== -->

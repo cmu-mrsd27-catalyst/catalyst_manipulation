@@ -153,11 +153,13 @@ Composes the full robot by:
 |----------|---------|-------------|
 | `prefix` | `""` | Namespace prefix for multi-robot setups |
 | `hw_ns` | `xarm` | Hardware namespace |
-| `robot_ip` | `""` | Robot IP for real hardware |
+| `robot_ip` | `192.168.1.212` | Robot IP for real hardware |
 | `robot_sn` | `""` | Robot serial number |
 | `limited` | `false` | Use limited joint ranges |
 | `velocity_control` | `false` | Enable velocity control mode |
 | `ros2_control_plugin` | `UFRobotFakeSystemHardware` | Hardware interface plugin |
+| `use_gazebo` | `false` | Include Gazebo-specific plugins |
+| `add_gripper_ros2_control` | `true` | Include gripper ros2_control interfaces (set to `false` for real hardware where the Dynamixel gripper is controlled independently) |
 
 ### Bio Gripper Files
 

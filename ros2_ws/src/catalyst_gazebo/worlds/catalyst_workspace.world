@@ -134,7 +134,7 @@
       <name>work_table</name>
       <uri>model://table</uri>
       <!-- X     Y    Z    Roll Pitch Yaw -->
-      <pose>0.55  0.0  0.8  0    0     0</pose>
+      <pose>0.65  0.0  0.8  0    0     1.5708</pose>
     </include>
 
     <!-- ==================== LIGHTING ==================== -->

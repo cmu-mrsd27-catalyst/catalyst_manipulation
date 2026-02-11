@@ -43,6 +43,14 @@ ros2 launch catalyst_gazebo gazebo.launch.py
 
 ### Launch Full Setup (Gazebo + MoveIt + RViz)
 
+**Recommended:** Use the unified launch file in `catalyst_bringup`:
+
+```bash
+ros2 launch catalyst_bringup demo.launch.py sim:=gazebo
+```
+
+Or use the standalone launch file in this package:
+
 ```bash
 ros2 launch catalyst_gazebo gazebo_moveit.launch.py
 ```

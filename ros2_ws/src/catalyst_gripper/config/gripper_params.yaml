@@ -1,0 +1,16 @@
+# Dynamixel AX-18A gripper configuration
+gripper_node:
+  ros__parameters:
+    # Serial port connected to the Dynamixel servo
+    port: /dev/ttyUSB0
+    baud_rate: 1000000
+
+    # Dynamixel servo ID
+    servo_id: 1
+
+    # Gripper position limits (meters, matching URDF joint limits)
+    min_position: 0.0
+    max_position: 0.037
+
+    # Joint state publish rate (Hz)
+    publish_rate: 30.0

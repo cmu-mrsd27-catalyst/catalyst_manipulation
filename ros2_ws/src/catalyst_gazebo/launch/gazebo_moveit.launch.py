@@ -24,9 +24,11 @@ ARGUMENTS:
 """
 
 import os
+import re
 import tempfile
 import subprocess
-from ament_index_python.packages import get_package_share_directory
+import yaml
+from ament_index_python.packages import get_package_share_directory, get_package_prefix
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -51,6 +53,14 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def load_yaml(package_name, file_path):
+    """Load a YAML file from a package."""
+    package_path = get_package_share_directory(package_name)
+    absolute_file_path = os.path.join(package_path, file_path)
+    with open(absolute_file_path, 'r') as file:
+        return yaml.safe_load(file)
+
+
 def generate_launch_description():
     # Package directories
     gazebo_pkg = get_package_share_directory('catalyst_gazebo')
@@ -63,7 +73,13 @@ def generate_launch_description():
     models_path = os.path.join(gazebo_pkg, 'models')
     gazebo_model_path = SetEnvironmentVariable(
         'GAZEBO_MODEL_PATH',
-        [EnvironmentVariable('GAZEBO_MODEL_PATH', default_value=''), ':', models_path]
+        [models_path, ':', EnvironmentVariable('GAZEBO_MODEL_PATH', default_value='')]
+    )
+    # Ensure Gazebo can find locally built plugins (e.g., xarm_gazebo mimic joint plugin)
+    plugin_path = os.path.join(get_package_prefix('xarm_gazebo'), 'lib')
+    gazebo_plugin_path = SetEnvironmentVariable(
+        'GAZEBO_PLUGIN_PATH',
+        [EnvironmentVariable('GAZEBO_PLUGIN_PATH', default_value=''), ':', plugin_path]
     )
 
     # Launch arguments
@@ -116,6 +132,16 @@ def generate_launch_description():
         'use_gazebo:=true',
         'ros2_control_plugin:=gazebo_ros2_control/GazeboSystem'
     ]).decode('utf-8')
+    # Workaround: strip XML comments to avoid ROS arg parser errors in gazebo_ros2_control
+    # when robot_description is present in inherited ROS arguments.
+    # urdf_content = re.sub(r'<!--.*?-->', '', urdf_content, flags=re.DOTALL)
+
+    # Remove XML comments entirely
+    urdf_content = re.sub(r'<!--.*?-->', '', urdf_content, flags=re.DOTALL)
+
+    # Extra hardening: some setups still break on colon patterns that survive in odd places
+    # This is conservative (doesn't change tags/attributes), only collapses colon+whitespace runs
+    urdf_content = re.sub(r':\s+', ':', urdf_content)
 
     # Write to a temporary file that persists for the session
     urdf_file = tempfile.NamedTemporaryFile(
@@ -137,17 +163,20 @@ def generate_launch_description():
         'robot_description_semantic': robot_description_semantic_content
     }
 
-    # Kinematics configuration
-    kinematics_yaml = os.path.join(moveit_config_pkg, 'config', 'kinematics.yaml')
+    # Load MoveIt configs (as dictionaries, not raw params files)
+    kinematics_yaml = load_yaml('moveit_config', 'config/kinematics.yaml')
+    joint_limits_yaml = load_yaml('moveit_config', 'config/joint_limits.yaml')
+    ompl_planning_yaml = load_yaml('moveit_config', 'config/ompl_planning.yaml')
+    controllers_yaml = load_yaml('moveit_config', 'config/controllers.yaml')
 
-    # OMPL planning configuration
-    ompl_planning_yaml = os.path.join(moveit_config_pkg, 'config', 'ompl_planning.yaml')
+    joint_limits = {'robot_description_planning': joint_limits_yaml}
+    ompl_planning = {'move_group': {'planning_plugin': 'ompl_interface/OMPLPlanner'}}
+    ompl_planning['move_group'].update(ompl_planning_yaml)
 
-    # Joint limits configuration
-    joint_limits_yaml = os.path.join(moveit_config_pkg, 'config', 'joint_limits.yaml')
-
-    # Controllers configuration for MoveIt
-    moveit_controllers_yaml = os.path.join(moveit_config_pkg, 'config', 'controllers.yaml')
+    moveit_controllers = {
+        'moveit_simple_controller_manager': controllers_yaml,
+        'moveit_controller_manager': 'moveit_simple_controller_manager/MoveItSimpleControllerManager',
+    }
 
     # RViz configuration
     rviz_config = os.path.join(moveit_config_pkg, 'rviz', 'moveit.rviz')
@@ -168,16 +197,25 @@ def generate_launch_description():
 
     # Start Gazebo (gzserver and gzclient separately to avoid parameter issues)
     gazebo_server = ExecuteProcess(
-        cmd=['gzserver', '--verbose', world,
+        cmd=['env', '-u', 'RCL_ARGUMENTS', '-u', 'ROS_ARGS',
+             'gzserver', '--verbose', world,
              '-s', 'libgazebo_ros_init.so',
              '-s', 'libgazebo_ros_factory.so'],
         output='screen',
+        additional_env={
+            'RCL_ARGUMENTS': '',
+            'ROS_ARGS': '',
+        },
     )
 
     gazebo_client = ExecuteProcess(
-        cmd=['gzclient'],
+        cmd=['env', '-u', 'RCL_ARGUMENTS', '-u', 'ROS_ARGS', 'gzclient'],
         output='screen',
         condition=IfCondition(gui),
+        additional_env={
+            'RCL_ARGUMENTS': '',
+            'ROS_ARGS': '',
+        },
     )
 
     # Spawn robot in Gazebo from file (not from parameter)
@@ -235,9 +273,9 @@ def generate_launch_description():
             {'robot_description': urdf_content},
             robot_description_semantic,
             kinematics_yaml,
-            ompl_planning_yaml,
-            joint_limits_yaml,
-            moveit_controllers_yaml,
+            ompl_planning,
+            joint_limits,
+            moveit_controllers,
             {'use_sim_time': use_sim_time},
             {'planning_scene_monitor_options': {
                 'robot_description': 'robot_description',
@@ -268,6 +306,14 @@ def generate_launch_description():
         ],
         condition=IfCondition(rviz),
     )
+
+    # Publish static planning scene objects (table + stand)
+    # planning_scene_node = Node(
+    #     package='catalyst_bringup',
+    #     executable='planning_scene_objects.py',
+    #     output='screen',
+    #     parameters=[{'use_sim_time': use_sim_time}],
+    # )
 
     # ==================== EVENT HANDLERS ====================
     # Sequence: spawn_robot -> joint_state_broadcaster -> controllers -> move_group
@@ -312,6 +358,7 @@ def generate_launch_description():
     return LaunchDescription([
         # Environment
         gazebo_model_path,
+        gazebo_plugin_path,
 
         # Arguments
         world_arg,
@@ -336,4 +383,5 @@ def generate_launch_description():
         # MoveIt (delayed)
         delayed_move_group,
         delayed_rviz,
+        # planning_scene_node,
     ])
