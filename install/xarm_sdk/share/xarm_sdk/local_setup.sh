@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/build/xarm_sdk/ament_cmake_environment_hooks/local_setup.sh

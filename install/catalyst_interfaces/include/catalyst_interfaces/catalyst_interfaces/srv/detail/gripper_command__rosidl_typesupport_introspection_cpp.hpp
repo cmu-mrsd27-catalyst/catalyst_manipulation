@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_typesupport_introspection_cpp/catalyst_interfaces/srv/detail/gripper_command__rosidl_typesupport_introspection_cpp.hpp

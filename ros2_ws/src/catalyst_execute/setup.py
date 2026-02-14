@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'catalyst_move'
+package_name = 'catalyst_execute'
 
 setup(
     name=package_name,
@@ -15,14 +15,12 @@ setup(
     zip_safe=True,
     maintainer='aman',
     maintainer_email='aman@todo.todo',
-    description='Interactive test script for xArm6 arm and gripper control',
+    description='Execution scripts for the Catalyst Manipulator',
     license='BSD-3-Clause',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'test_move = catalyst_move.test_move:main',
-            'arm_control = catalyst_move.arm_control_node:main',
-            'guide_mode = catalyst_move.guide_mode:main',
+            'test_execute = catalyst_execute.test_execute:main',
         ],
     },
 )

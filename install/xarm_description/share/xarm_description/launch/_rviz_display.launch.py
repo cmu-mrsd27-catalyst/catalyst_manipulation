@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/ros2_ws/src/external/xarm_ros2/xarm_description/launch/_rviz_display.launch.py

@@ -12,7 +12,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', ['config/gripper_params.yaml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'dynamixel-sdk'],
     zip_safe=True,
     maintainer='aman',
     maintainer_email='aman@todo.todo',

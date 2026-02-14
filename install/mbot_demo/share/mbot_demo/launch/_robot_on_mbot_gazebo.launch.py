@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/ros2_ws/src/external/xarm_ros2/demo/mbot_demo/launch/_robot_on_mbot_gazebo.launch.py

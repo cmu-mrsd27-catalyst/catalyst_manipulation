@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/ros2_ws/src/external/xarm_ros2/xarm_sdk/cxx/include/xarm/core/instruction/uxbus_cmd_tcp.h

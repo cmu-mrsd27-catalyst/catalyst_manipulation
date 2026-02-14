@@ -1,4 +1,0 @@
-srv/GripperCommand.idl
-srv/GripperCommand.srv
-srv/GripperCommand_Request.msg
-srv/GripperCommand_Response.msg

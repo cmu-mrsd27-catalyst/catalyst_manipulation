@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/ros2_ws/src/external/xarm_ros2/xarm_description/launch/lib/robot_description_lib.py

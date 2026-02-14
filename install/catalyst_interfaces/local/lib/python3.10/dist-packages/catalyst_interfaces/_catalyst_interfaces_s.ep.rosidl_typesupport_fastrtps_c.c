@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_generator_py/catalyst_interfaces/_catalyst_interfaces_s.ep.rosidl_typesupport_fastrtps_c.c

@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_generator_c/catalyst_interfaces/srv/gripper_command.h

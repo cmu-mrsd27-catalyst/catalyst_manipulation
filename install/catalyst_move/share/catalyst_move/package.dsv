@@ -1,9 +1,0 @@
-source;share/catalyst_move/hook/pythonpath.ps1
-source;share/catalyst_move/hook/pythonpath.dsv
-source;share/catalyst_move/hook/pythonpath.sh
-source;share/catalyst_move/hook/ament_prefix_path.ps1
-source;share/catalyst_move/hook/ament_prefix_path.dsv
-source;share/catalyst_move/hook/ament_prefix_path.sh
-source;../../build/catalyst_move/share/catalyst_move/hook/pythonpath_develop.ps1
-source;../../build/catalyst_move/share/catalyst_move/hook/pythonpath_develop.dsv
-source;../../build/catalyst_move/share/catalyst_move/hook/pythonpath_develop.sh

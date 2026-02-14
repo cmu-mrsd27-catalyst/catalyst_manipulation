@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/build/description/ament_cmake_core/descriptionConfig.cmake

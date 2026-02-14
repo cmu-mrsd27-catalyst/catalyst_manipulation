@@ -1,1 +1,0 @@
-/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_typesupport_introspection_c/catalyst_interfaces/msg/rosidl_typesupport_introspection_c__visibility_control.h

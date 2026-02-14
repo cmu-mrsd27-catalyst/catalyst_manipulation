@@ -1,6 +1,0 @@
-setup.py
-catalyst_interfaces/__init__.py
-catalyst_interfaces.egg-info/PKG-INFO
-catalyst_interfaces.egg-info/SOURCES.txt
-catalyst_interfaces.egg-info/dependency_links.txt
-catalyst_interfaces.egg-info/top_level.txt
