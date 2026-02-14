@@ -1,0 +1,3 @@
+[console_scripts]
+test_move = catalyst_move.test_move:main
+

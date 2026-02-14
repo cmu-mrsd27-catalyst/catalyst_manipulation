@@ -1,0 +1,3 @@
+[console_scripts]
+gripper_node = catalyst_gripper.gripper_node:main
+

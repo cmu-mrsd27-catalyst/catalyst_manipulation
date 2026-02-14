@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/build/xarm_sdk/ament_cmake_core/xarm_sdkConfig-version.cmake

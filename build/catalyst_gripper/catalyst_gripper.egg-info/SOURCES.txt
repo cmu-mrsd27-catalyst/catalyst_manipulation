@@ -1,0 +1,15 @@
+package.xml
+setup.cfg
+setup.py
+catalyst_gripper/__init__.py
+catalyst_gripper/gripper_controller.py
+catalyst_gripper/gripper_node.py
+catalyst_gripper.egg-info/PKG-INFO
+catalyst_gripper.egg-info/SOURCES.txt
+catalyst_gripper.egg-info/dependency_links.txt
+catalyst_gripper.egg-info/entry_points.txt
+catalyst_gripper.egg-info/requires.txt
+catalyst_gripper.egg-info/top_level.txt
+catalyst_gripper.egg-info/zip-safe
+config/gripper_params.yaml
+resource/catalyst_gripper

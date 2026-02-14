@@ -1,0 +1,6 @@
+{
+  "package_name": "catalyst_interfaces",
+  "non_idl_tuples": [
+    "/home/aman/catalyst-manipulation/ros2_ws/src/catalyst_interfaces:srv/GripperCommand.srv"
+  ]
+}

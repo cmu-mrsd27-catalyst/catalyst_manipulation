@@ -1,0 +1,9 @@
+source;share/catalyst_gripper/hook/pythonpath.ps1
+source;share/catalyst_gripper/hook/pythonpath.dsv
+source;share/catalyst_gripper/hook/pythonpath.sh
+source;share/catalyst_gripper/hook/ament_prefix_path.ps1
+source;share/catalyst_gripper/hook/ament_prefix_path.dsv
+source;share/catalyst_gripper/hook/ament_prefix_path.sh
+source;../../build/catalyst_gripper/share/catalyst_gripper/hook/pythonpath_develop.ps1
+source;../../build/catalyst_gripper/share/catalyst_gripper/hook/pythonpath_develop.dsv
+source;../../build/catalyst_gripper/share/catalyst_gripper/hook/pythonpath_develop.sh

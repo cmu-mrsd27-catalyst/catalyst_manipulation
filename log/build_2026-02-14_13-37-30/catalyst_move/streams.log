@@ -1,0 +1,24 @@
+[2.822s] Invoking command in '/home/aman/catalyst-manipulation/build/catalyst_move': AMENT_PREFIX_PATH=/home/aman/catalyst-manipulation/install/catalyst_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/aman/catalyst-manipulation/install/catalyst_interfaces LD_LIBRARY_PATH=/home/aman/catalyst-manipulation/install/catalyst_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/aman/catalyst-manipulation/build/catalyst_move/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/aman/catalyst-manipulation/install/catalyst_move/lib/python3.10/site-packages:/home/aman/catalyst-manipulation/install/catalyst_interfaces/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/aman/catalyst-manipulation/build/catalyst_move/build --no-deps symlink_data
+[3.154s] running develop
+[3.391s] running egg_info
+[3.391s] creating catalyst_move.egg-info
+[3.392s] writing catalyst_move.egg-info/PKG-INFO
+[3.393s] writing dependency_links to catalyst_move.egg-info/dependency_links.txt
+[3.393s] writing entry points to catalyst_move.egg-info/entry_points.txt
+[3.393s] writing requirements to catalyst_move.egg-info/requires.txt
+[3.393s] writing top-level names to catalyst_move.egg-info/top_level.txt
+[3.393s] writing manifest file 'catalyst_move.egg-info/SOURCES.txt'
+[3.396s] reading manifest file 'catalyst_move.egg-info/SOURCES.txt'
+[3.396s] writing manifest file 'catalyst_move.egg-info/SOURCES.txt'
+[3.399s] running build_ext
+[3.399s] Creating /home/aman/catalyst-manipulation/install/catalyst_move/lib/python3.10/site-packages/catalyst-move.egg-link (link to .)
+[3.400s] Installing test_move script to /home/aman/catalyst-manipulation/install/catalyst_move/lib/catalyst_move
+[3.401s] 
+[3.401s] Installed /home/aman/catalyst-manipulation/build/catalyst_move
+[3.401s] running symlink_data
+[3.401s] creating /home/aman/catalyst-manipulation/install/catalyst_move/share/ament_index
+[3.401s] creating /home/aman/catalyst-manipulation/install/catalyst_move/share/ament_index/resource_index
+[3.401s] creating /home/aman/catalyst-manipulation/install/catalyst_move/share/ament_index/resource_index/packages
+[3.401s] symbolically linking /home/aman/catalyst-manipulation/build/catalyst_move/resource/catalyst_move -> /home/aman/catalyst-manipulation/install/catalyst_move/share/ament_index/resource_index/packages
+[3.401s] symbolically linking /home/aman/catalyst-manipulation/build/catalyst_move/package.xml -> /home/aman/catalyst-manipulation/install/catalyst_move/share/catalyst_move
+[3.479s] Invoked command in '/home/aman/catalyst-manipulation/build/catalyst_move' returned '0': AMENT_PREFIX_PATH=/home/aman/catalyst-manipulation/install/catalyst_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/aman/catalyst-manipulation/install/catalyst_interfaces LD_LIBRARY_PATH=/home/aman/catalyst-manipulation/install/catalyst_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/aman/catalyst-manipulation/build/catalyst_move/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/aman/catalyst-manipulation/install/catalyst_move/lib/python3.10/site-packages:/home/aman/catalyst-manipulation/install/catalyst_interfaces/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/aman/catalyst-manipulation/build/catalyst_move/build --no-deps symlink_data

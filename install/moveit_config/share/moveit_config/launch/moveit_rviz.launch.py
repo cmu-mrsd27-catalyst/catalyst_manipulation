@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/ros2_ws/src/moveit_config/launch/moveit_rviz.launch.py

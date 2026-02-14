@@ -21,6 +21,7 @@
 
   <!-- Real mode: merges joint states from multiple sources -->
   <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>catalyst_gripper</exec_depend>
 
   <!-- Gazebo mode -->
   <exec_depend>gazebo_ros</exec_depend>

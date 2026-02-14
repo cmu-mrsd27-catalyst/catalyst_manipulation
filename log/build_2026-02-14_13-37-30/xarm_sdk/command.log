@@ -1,0 +1,6 @@
+Invoking command in '/home/aman/catalyst-manipulation/build/xarm_sdk': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/aman/catalyst-manipulation/ros2_ws/src/external/xarm_ros2/xarm_sdk -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/aman/catalyst-manipulation/install/xarm_sdk
+Invoked command in '/home/aman/catalyst-manipulation/build/xarm_sdk' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/aman/catalyst-manipulation/ros2_ws/src/external/xarm_ros2/xarm_sdk -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/aman/catalyst-manipulation/install/xarm_sdk
+Invoking command in '/home/aman/catalyst-manipulation/build/xarm_sdk': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aman/catalyst-manipulation/build/xarm_sdk -- -j16 -l16
+Invoked command in '/home/aman/catalyst-manipulation/build/xarm_sdk' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aman/catalyst-manipulation/build/xarm_sdk -- -j16 -l16
+Invoking command in '/home/aman/catalyst-manipulation/build/xarm_sdk': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aman/catalyst-manipulation/build/xarm_sdk
+Invoked command in '/home/aman/catalyst-manipulation/build/xarm_sdk' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aman/catalyst-manipulation/build/xarm_sdk

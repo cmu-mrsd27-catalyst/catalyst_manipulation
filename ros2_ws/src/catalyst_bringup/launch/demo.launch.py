@@ -197,6 +197,18 @@ def generate_launch_description():
         )
         actions.append(joint_state_publisher_node)
 
+        # Gripper node (real hardware only — sim modes use bio_gripper_controller)
+        gripper_pkg = get_package_share_directory('catalyst_gripper')
+        gripper_config_path = os.path.join(gripper_pkg, 'config', 'gripper_params.yaml')
+        gripper_node = Node(
+            package='catalyst_gripper',
+            executable='gripper_node',
+            name='gripper_node',
+            output='screen',
+            parameters=[{'config_path': gripper_config_path}],
+        )
+        actions.append(gripper_node)
+
     # ── Gazebo nodes ──
     if is_gazebo:
         gazebo_pkg = get_package_share_directory('catalyst_gazebo')

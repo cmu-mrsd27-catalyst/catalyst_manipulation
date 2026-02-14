@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_generator_py/catalyst_interfaces/srv/__init__.py

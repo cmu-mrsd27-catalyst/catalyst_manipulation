@@ -1,0 +1,6 @@
+Invoking command in '/home/aman/catalyst-manipulation/build/description': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/aman/catalyst-manipulation/ros2_ws/src/description -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/aman/catalyst-manipulation/install/description
+Invoked command in '/home/aman/catalyst-manipulation/build/description' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/aman/catalyst-manipulation/ros2_ws/src/description -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/aman/catalyst-manipulation/install/description
+Invoking command in '/home/aman/catalyst-manipulation/build/description': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aman/catalyst-manipulation/build/description -- -j16 -l16
+Invoked command in '/home/aman/catalyst-manipulation/build/description' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aman/catalyst-manipulation/build/description -- -j16 -l16
+Invoking command in '/home/aman/catalyst-manipulation/build/description': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aman/catalyst-manipulation/build/description
+Invoked command in '/home/aman/catalyst-manipulation/build/description' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aman/catalyst-manipulation/build/description

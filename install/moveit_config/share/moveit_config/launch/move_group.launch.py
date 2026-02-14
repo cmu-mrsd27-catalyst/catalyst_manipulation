@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/ros2_ws/src/moveit_config/launch/move_group.launch.py

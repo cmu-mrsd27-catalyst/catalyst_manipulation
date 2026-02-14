@@ -10,11 +10,11 @@ MoveIt still sees the gripper geometry (links, joints, collision meshes) from th
 
 ## Joint State Publishing
 
-The gripper node publishes `right_finger_joint` to `/joint_states` so that:
+The gripper node publishes `right_finger_joint` to `/joint_states` at a configurable rate (default 30 Hz) so that:
 - `robot_state_publisher` computes the gripper TF tree
 - MoveIt sees the correct collision state of the gripper
 
-`left_finger_joint` is handled automatically via the URDF mimic relationship (mirrors `right_finger_joint` with multiplier `-1.0`).
+Position is read from the real servo and converted from ticks to meters. `left_finger_joint` is handled automatically via the URDF mimic relationship (mirrors `right_finger_joint` with multiplier `-1.0`).
 
 ## Installation
 
@@ -24,11 +24,13 @@ Install the Dynamixel SDK:
 pip install dynamixel-sdk
 ```
 
-Build the package:
+Build the interfaces package first, then the gripper package:
 
 ```bash
 cd ~/catalyst-manipulation/ros2_ws
+colcon build --packages-select catalyst_interfaces
 colcon build --packages-select catalyst_gripper
+source install/setup.bash
 ```
 
 ## Usage
@@ -36,8 +38,14 @@ colcon build --packages-select catalyst_gripper
 ### Standalone
 
 ```bash
-ros2 run catalyst_gripper gripper_node --ros-args --params-file \
-  $(ros2 pkg prefix catalyst_gripper)/share/catalyst_gripper/config/gripper_params.yaml
+ros2 run catalyst_gripper gripper_node
+```
+
+To load gripper config from a YAML file:
+
+```bash
+ros2 run catalyst_gripper gripper_node --ros-args \
+  -p config_path:=$(ros2 pkg prefix catalyst_gripper)/share/catalyst_gripper/config/gripper_params.yaml
 ```
 
 ### With the unified launch file
@@ -49,27 +57,70 @@ In real-robot mode (`sim:=false`), the gripper node should be launched separatel
 ros2 launch catalyst_bringup demo.launch.py robot_ip:=192.168.1.212
 
 # Terminal 2: Gripper
-ros2 run catalyst_gripper gripper_node --ros-args --params-file \
-  $(ros2 pkg prefix catalyst_gripper)/share/catalyst_gripper/config/gripper_params.yaml
+ros2 run catalyst_gripper gripper_node
 ```
 
 ## Configuration
 
-Edit `config/gripper_params.yaml`:
+The node reads gripper hardware config from `gripper_params.yaml` (via the `config_path` parameter). Key settings:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `port` | `/dev/ttyUSB0` | Serial port for Dynamixel |
-| `baud_rate` | `1000000` | Baud rate (AX-18A default) |
-| `servo_id` | `1` | Dynamixel servo ID |
-| `min_position` | `0.0` | Closed position (meters) |
-| `max_position` | `0.037` | Open position (meters) |
+| `devicename` | `/dev/ttyUSB0` | Serial port for Dynamixel |
+| `baudrate` | `1000000` | Baud rate (AX-18A default) |
+| `dxl_id` | `7` | Dynamixel servo ID |
+| `pos_min` | `30` | Minimum position limit (ticks, fully open) |
+| `pos_max` | `720` | Maximum position limit (ticks, fully closed) |
+| `close_speed` | `150` | Motor speed during closing (0-1023) |
+| `load_threshold` | `80` | Opposing load threshold for contact detection |
+| `hold_torque_limit` | `900` | Torque limit while holding an object |
+
+ROS parameters on the node:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `config_path` | `''` | Path to `gripper_params.yaml` (uses defaults if empty) |
+| `max_position` | `0.037` | Maximum joint position in meters |
 | `publish_rate` | `30.0` | Joint state publish rate (Hz) |
 
-## Command Interface
+## Service Interface
 
-Send gripper commands (position in meters):
+The gripper exposes a `~/gripper_command` service (`catalyst_interfaces/srv/GripperCommand`) that accepts JSON commands:
+
+### Close the gripper
 
 ```bash
-ros2 topic pub /gripper_node/command std_msgs/msg/Float64 "{data: 0.02}"
+ros2 service call /gripper_node/gripper_command catalyst_interfaces/srv/GripperCommand \
+  "{command: '{\"action\": \"close\"}'}"
+```
+
+Returns `{"success": true, "message": "contact detected", "position": 450}` if an object is grasped, or `{"success": false, "message": "no object detected", "position": 705}` if no object is found.
+
+### Open the gripper
+
+```bash
+# Open to default position
+ros2 service call /gripper_node/gripper_command catalyst_interfaces/srv/GripperCommand \
+  "{command: '{\"action\": \"open\"}'}"
+
+# Open to a specific servo position (ticks)
+ros2 service call /gripper_node/gripper_command catalyst_interfaces/srv/GripperCommand \
+  "{command: '{\"action\": \"open\", \"position\": 200}'}"
+```
+
+### Release (disable torque)
+
+```bash
+ros2 service call /gripper_node/gripper_command catalyst_interfaces/srv/GripperCommand \
+  "{command: '{\"action\": \"release\"}'}"
+```
+
+## Monitoring
+
+```bash
+# Check joint states are publishing
+ros2 topic echo /joint_states
+
+# List available services
+ros2 service list | grep gripper
 ```

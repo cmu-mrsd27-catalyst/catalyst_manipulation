@@ -1,0 +1,10 @@
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/uninstall.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/xarm_sdk_uninstall.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/xarm_cxx_sdk.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/test.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/edit_cache.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/rebuild_cache.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/list_install_components.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/install.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/install/local.dir
+/home/aman/catalyst-manipulation/build/xarm_sdk/CMakeFiles/install/strip.dir

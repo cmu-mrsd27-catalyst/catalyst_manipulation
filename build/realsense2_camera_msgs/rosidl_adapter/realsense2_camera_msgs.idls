@@ -1,0 +1,8 @@
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:msg/IMUInfo.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:msg/Extrinsics.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:msg/Metadata.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:msg/RGBD.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:srv/DeviceInfo.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:srv/CalibConfigRead.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:srv/CalibConfigWrite.idl
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_adapter/realsense2_camera_msgs:action/TriggeredCalibration.idl

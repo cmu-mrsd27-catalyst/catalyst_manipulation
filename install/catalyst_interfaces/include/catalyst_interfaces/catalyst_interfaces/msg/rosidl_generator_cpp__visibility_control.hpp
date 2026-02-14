@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_generator_cpp/catalyst_interfaces/msg/rosidl_generator_cpp__visibility_control.hpp

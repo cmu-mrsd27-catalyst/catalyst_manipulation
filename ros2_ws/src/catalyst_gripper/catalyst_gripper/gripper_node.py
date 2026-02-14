@@ -1,111 +1,209 @@
 """
 Dynamixel AX-18A Gripper Node for Catalyst Manipulator.
 
-Publishes right_finger_joint position to /joint_states so that
-robot_state_publisher computes gripper TF and MoveIt sees the
-correct collision state. left_finger_joint is handled automatically
-via the URDF mimic relationship.
+Provides:
+- ~/gripper_command service (catalyst_interfaces/srv/GripperCommand)
+  for JSON-based open/close commands
+- Continuous joint state publishing on /joint_states with real servo position
 
-Subscribes to gripper commands on ~/command (std_msgs/Float64)
-to open/close the gripper.
+left_finger_joint is handled automatically via the URDF mimic relationship.
 """
+
+import json
+import os
+import threading
 
 import rclpy
 from rclpy.node import Node
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64
+from ament_index_python.packages import get_package_share_directory
+
+from catalyst_interfaces.srv import GripperCommand
+from catalyst_gripper.gripper_controller import AX18AGripper, GripperConfig
 
 
 class GripperNode(Node):
     def __init__(self):
         super().__init__('gripper_node')
 
-        # Declare parameters (loaded from gripper_params.yaml)
-        self.declare_parameter('port', '/dev/ttyUSB0')
-        self.declare_parameter('baud_rate', 1000000)
-        self.declare_parameter('servo_id', 1)
-        self.declare_parameter('min_position', 0.0)
+        # Declare parameters
+        self.declare_parameter('config_path', '')
         self.declare_parameter('max_position', 0.037)
         self.declare_parameter('publish_rate', 30.0)
 
-        self._port = self.get_parameter('port').value
-        self._baud_rate = self.get_parameter('baud_rate').value
-        self._servo_id = self.get_parameter('servo_id').value
-        self._min_pos = self.get_parameter('min_position').value
+        config_path = self.get_parameter('config_path').value
         self._max_pos = self.get_parameter('max_position').value
         publish_rate = self.get_parameter('publish_rate').value
 
-        # Current joint position (start closed)
-        self._current_position = 0.0
+        # Initialize gripper controller
+        if not config_path:
+            config_path = os.path.join(
+                get_package_share_directory('catalyst_gripper'),
+                'config', 'gripper_params.yaml',
+            )
+        self._cfg = GripperConfig.from_yaml(config_path)
+        self.get_logger().info(f'Loaded gripper config from {config_path}')
+        self._gripper = AX18AGripper(self._cfg)
 
-        # TODO: Initialize Dynamixel SDK
-        # from dynamixel_sdk import PortHandler, PacketHandler
-        # self._port_handler = PortHandler(self._port)
-        # self._packet_handler = PacketHandler(1.0)  # Protocol 1.0 for AX-18A
-        # if not self._port_handler.openPort():
-        #     self.get_logger().error(f'Failed to open port {self._port}')
-        #     return
-        # if not self._port_handler.setBaudRate(self._baud_rate):
-        #     self.get_logger().error(f'Failed to set baud rate {self._baud_rate}')
-        #     return
-        # self.get_logger().info(f'Dynamixel port {self._port} opened at {self._baud_rate} baud')
+        try:
+            self._gripper.connect()
+            self.get_logger().info(
+                f'Connected to Dynamixel servo on {self._cfg.devicename} '
+                f'(ID={self._cfg.dxl_id})'
+            )
+        except RuntimeError as e:
+            self.get_logger().error(f'Failed to connect to gripper: {e}')
+            raise
+
+        # Lock for servo access (service runs in a separate thread)
+        self._servo_lock = threading.Lock()
+
+        # Callback groups: allow service to run concurrently with timer
+        self._service_cb_group = ReentrantCallbackGroup()
+        self._timer_cb_group = ReentrantCallbackGroup()
+
+        # Service: ~/gripper_command
+        self._srv = self.create_service(
+            GripperCommand,
+            '~/gripper_command',
+            self._handle_gripper_command,
+            callback_group=self._service_cb_group,
+        )
 
         # Publisher: joint states for robot_state_publisher
         self._joint_state_pub = self.create_publisher(
             JointState, '/joint_states', 10
         )
 
-        # Subscriber: gripper commands (position in meters)
-        self._command_sub = self.create_subscription(
-            Float64, '~/command', self._command_callback, 10
+        # Timer: publish joint states at configured rate
+        self._timer = self.create_timer(
+            1.0 / publish_rate,
+            self._publish_joint_state,
+            callback_group=self._timer_cb_group,
         )
 
-        # Timer: publish joint states at configured rate
-        self._timer = self.create_timer(1.0 / publish_rate, self._publish_joint_state)
+        self.get_logger().info(
+            f'Gripper node started (publish_rate={publish_rate} Hz)'
+        )
 
-        self.get_logger().info('Gripper node started (Dynamixel SDK not yet initialized)')
+    def _ticks_to_meters(self, ticks):
+        """Convert servo ticks to meters for the joint state."""
+        ratio = (ticks - self._cfg.pos_min) / (self._cfg.pos_max - self._cfg.pos_min)
+        return max(0.0, min(self._max_pos, ratio * self._max_pos))
 
-    def _command_callback(self, msg: Float64):
-        """Handle gripper position command."""
-        target = max(self._min_pos, min(self._max_pos, msg.data))
+    def _handle_gripper_command(self, request, response):
+        """Handle GripperCommand service calls."""
+        try:
+            cmd = json.loads(request.command)
+        except json.JSONDecodeError as e:
+            response.response = json.dumps({
+                'success': False,
+                'message': f'Invalid JSON: {e}',
+            })
+            return response
 
-        # TODO: Convert meters to Dynamixel position ticks and write to servo
-        # goal_position = self._meters_to_ticks(target)
-        # self._packet_handler.write2ByteTxRx(
-        #     self._port_handler, self._servo_id, ADDR_GOAL_POSITION, goal_position
-        # )
+        action = cmd.get('action', '').lower()
 
-        self._current_position = target
-        self.get_logger().debug(f'Gripper command: {target:.4f} m')
+        if action == 'open':
+            target_pos = cmd.get('position', None)
+            self.get_logger().info(
+                f'Opening gripper'
+                + (f' to position {target_pos}' if target_pos is not None else '')
+            )
+            try:
+                with self._servo_lock:
+                    self._gripper.open_gripper(target_pos)
+                    data = self._gripper.get_data()
+                response.response = json.dumps({
+                    'success': True,
+                    'message': 'gripper opened',
+                    'position': data['position'],
+                })
+            except RuntimeError as e:
+                response.response = json.dumps({
+                    'success': False,
+                    'message': str(e),
+                })
+
+        elif action == 'close':
+            self.get_logger().info('Closing gripper')
+            try:
+                with self._servo_lock:
+                    contact = self._gripper.close_gripper()
+                    data = self._gripper.get_data()
+                msg = 'contact detected' if contact else 'no object detected'
+                response.response = json.dumps({
+                    'success': contact,
+                    'message': msg,
+                    'position': data['position'],
+                })
+            except RuntimeError as e:
+                response.response = json.dumps({
+                    'success': False,
+                    'message': str(e),
+                })
+
+        elif action == 'release':
+            self.get_logger().info('Releasing gripper')
+            try:
+                with self._servo_lock:
+                    self._gripper.release()
+                    data = self._gripper.get_data()
+                response.response = json.dumps({
+                    'success': True,
+                    'message': 'gripper released',
+                    'position': data['position'],
+                })
+            except RuntimeError as e:
+                response.response = json.dumps({
+                    'success': False,
+                    'message': str(e),
+                })
+
+        else:
+            response.response = json.dumps({
+                'success': False,
+                'message': f"Unknown action '{action}'. Use 'open', 'close', or 'release'.",
+            })
+
+        return response
 
     def _publish_joint_state(self):
-        """Publish current gripper joint state."""
-        # TODO: Read actual position from Dynamixel servo
-        # present_position, _, _ = self._packet_handler.read2ByteTxRx(
-        #     self._port_handler, self._servo_id, ADDR_PRESENT_POSITION
-        # )
-        # self._current_position = self._ticks_to_meters(present_position)
+        """Publish current gripper joint state from real servo position."""
+        try:
+            with self._servo_lock:
+                data = self._gripper.get_data()
+            meters = self._ticks_to_meters(data['position'])
+        except RuntimeError:
+            return  # skip this cycle if read fails
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = ['right_finger_joint']
-        msg.position = [self._current_position]
+        msg.position = [meters]
         msg.velocity = [0.0]
         msg.effort = [0.0]
         self._joint_state_pub.publish(msg)
 
     def destroy_node(self):
-        # TODO: Close Dynamixel port
-        # if hasattr(self, '_port_handler'):
-        #     self._port_handler.closePort()
+        self.get_logger().info('Shutting down gripper node')
+        try:
+            self._gripper.release()
+        except Exception:
+            pass
+        self._gripper.close_port()
         super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = GripperNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     node.destroy_node()

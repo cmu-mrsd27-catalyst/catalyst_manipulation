@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/build/catalyst_interfaces/rosidl_typesupport_fastrtps_c/catalyst_interfaces/srv/detail/gripper_command__rosidl_typesupport_fastrtps_c.h

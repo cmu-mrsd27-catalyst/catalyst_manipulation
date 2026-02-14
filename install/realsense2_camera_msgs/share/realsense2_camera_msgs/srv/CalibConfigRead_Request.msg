@@ -1,0 +1,1 @@
+/home/aman/catalyst-manipulation/build/realsense2_camera_msgs/rosidl_cmake/srv/CalibConfigRead_Request.msg
