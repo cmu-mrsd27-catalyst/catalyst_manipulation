@@ -6,6 +6,7 @@ import json
 import rclpy
 from rclpy.node import Node
 from catalyst_interfaces.srv import GripperCommand
+import time
 
 
 JOINT_SERVICE = '/arm_control/joint'
@@ -18,14 +19,14 @@ class TestExecuteNode(Node):
         super().__init__('test_execute')
         self._joint_client = self.create_client(GripperCommand, JOINT_SERVICE)
         self._cartesian_client = self.create_client(GripperCommand, CARTESIAN_SERVICE)
-        # self._gripper_client = self.create_client(GripperCommand, GRIPPER_SERVICE)
+        self._gripper_client = self.create_client(GripperCommand, GRIPPER_SERVICE)
 
     def wait_for_services(self):
         self.get_logger().info('Waiting for arm_control services...')
         self._joint_client.wait_for_service()
         self._cartesian_client.wait_for_service()
         self.get_logger().info('Waiting for gripper service...')
-        # self._gripper_client.wait_for_service()
+        self._gripper_client.wait_for_service()
         self.get_logger().info('All services ready.')
 
     def _call(self, client, command):
@@ -75,10 +76,17 @@ def main():
 
     # 1. Go to home
     node.move_pose('home', speed=0.2)
-    # node.open_gripper()
-    node.move_cartesian(0.5966, -0.0903, 0.14, 0.9974, -0.0569, -0.0439, 0.0105, speed=0.2)
-    node.move_cartesian(0.5966, -0.0903, 0.0775, 0.9974, -0.0569, -0.0439, 0.0105, speed=0.2)
-    # node.close_gripper
+    node.open_gripper()
+    # node.move_cartesian(0.5966, -0.0903, 0.14, 0.9974, -0.0569, -0.0439, 0.0105, speed=0.2)
+    # node.move_cartesian(0.5966, -0.0903, 0.0775, 0.9974, -0.0569, -0.0439, 0.0105, speed=0.2)
+    node.move_joints([-5.9, 31.23, -82.67, 2.59, 54.86, 0.44], speed = 0.2)
+    time.sleep(0.5)
+    node.move_joints([-5.6, 39.16, -77.06, 0.02, 38.86, 0.44], speed = 0.05)
+    time.sleep(0.5)
+    node.close_gripper()
+    time.sleep(0.5)
+    node.move_joints([-5.9, 31.23, -82.67, 2.59, 54.86, 0.44], speed = 0.05)
+    time.sleep(0.5)
 
     # 3. Move to specific joint angles (degrees)
     # node.move_joints([0, -30, 0, 0, -90, 0])
@@ -89,6 +97,7 @@ def main():
 
     # 5. Back to home
     node.move_pose('home', speed=0.2)
+    node.open_gripper()
 
     node.get_logger().info('=== Test sequence complete ===')
 

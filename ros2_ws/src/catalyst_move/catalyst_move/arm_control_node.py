@@ -234,8 +234,8 @@ class ArmControlNode(Node):
         goal = MoveGroup.Goal()
         req = goal.request
         req.group_name = PLANNING_GROUP
-        req.num_planning_attempts = 5
-        req.allowed_planning_time = 5.0
+        req.num_planning_attempts = 100
+        req.allowed_planning_time = 20.0
         req.max_velocity_scaling_factor = speed
         req.max_acceleration_scaling_factor = speed
 
@@ -244,15 +244,16 @@ class ArmControlNode(Node):
             jc = JointConstraint()
             jc.joint_name = jname
             jc.position = val
-            jc.tolerance_above = 0.01
-            jc.tolerance_below = 0.01
+            jc.tolerance_above = 0.005
+            jc.tolerance_below = 0.005
             jc.weight = 1.0
             constraints.joint_constraints.append(jc)
         req.goal_constraints.append(constraints)
 
         goal.planning_options.plan_only = False
         goal.planning_options.replan = True
-        goal.planning_options.replan_attempts = 3
+        goal.planning_options.replan_attempts = 50
+
 
         success, message = self._execute_goal(goal)
         response.response = _resp(success, message)

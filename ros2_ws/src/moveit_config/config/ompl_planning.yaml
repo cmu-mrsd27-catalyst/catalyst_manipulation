@@ -61,7 +61,7 @@ planner_configs:
 
 # xArm-6 planning group configuration
 xarm6:
-  default_planner_config: RRTstar
+  default_planner_config: RRTConnect
   planner_configs:
     - SBL
     - EST
@@ -89,6 +89,6 @@ xarm6:
 
 # Bio gripper planning group configuration
 bio_gripper:
-  default_planner_config: RRTstar
+  default_planner_config: RRTConnect
   planner_configs:
-    - RRTstar
+    - RRTConnect
