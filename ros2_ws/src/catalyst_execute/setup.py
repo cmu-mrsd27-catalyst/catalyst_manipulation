@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'test_execute = catalyst_execute.test_execute:main',
+            'guide_mode = catalyst_execute.guide_mode:main',
         ],
     },
 )

@@ -11,6 +11,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from tf2_ros import Buffer, TransformListener
 from controller_manager_msgs.srv import SwitchController
+from catalyst_interfaces.srv import GripperCommand
 from xarm.wrapper import XArmAPI
 
 
@@ -19,6 +20,9 @@ BASE_FRAME = 'link_base'
 TCP_FRAME = 'link_tcp'
 ARM_CONTROLLER = 'xarm6_traj_controller'
 JSB_CONTROLLER = 'joint_state_broadcaster'
+
+JOINT_SERVICE = '/joint_command'
+CARTESIAN_SERVICE = '/cartesian_command'
 
 XARM_MODE_TEACH = 2
 XARM_MODE_POSITION = 0
@@ -36,6 +40,10 @@ class GuideModeNode(Node):
         self._switch_ctrl = self.create_client(
             SwitchController, '/controller_manager/switch_controller'
         )
+
+        # Service clients for catalyst_motion_planner
+        self._joint_client = self.create_client(GripperCommand, JOINT_SERVICE)
+        self._cartesian_client = self.create_client(GripperCommand, CARTESIAN_SERVICE)
 
         # TF2 for TCP pose
         self._tf_buffer = Buffer()
@@ -142,11 +150,39 @@ class GuideModeNode(Node):
             self.get_logger().warn(f'TF lookup failed: {e}')
             return None
 
+    def _call_service(self, client, command):
+        """Call a catalyst_motion_planner service."""
+        req = GripperCommand.Request()
+        req.command = json.dumps(command)
+        self.get_logger().info(f'Sending: {req.command}')
+        future = client.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=60.0)
+        if future.result() is not None:
+            resp = json.loads(future.result().response)
+            self.get_logger().info(f'Result: {resp["message"]}')
+            return resp['success']
+        self.get_logger().error('Service call failed')
+        return False
+
+    def execute_joint_position(self, joints_deg, speed=0.2):
+        """Send recorded joint position to /joint_command."""
+        return self._call_service(self._joint_client, {'joints': joints_deg, 'speed': speed})
+
+    def execute_cartesian_pose(self, pose, speed=0.2):
+        """Send recorded TCP pose to /cartesian_command."""
+        return self._call_service(self._cartesian_client, {
+            'x': pose['x'], 'y': pose['y'], 'z': pose['z'],
+            'qx': pose['qx'], 'qy': pose['qy'], 'qz': pose['qz'], 'qw': pose['qw'],
+            'speed': speed,
+        })
+
 
 def print_menu():
     print('\n=== Guide Mode (Teach) ===')
     print('1. Get joint positions')
     print('2. Get TCP cartesian pose')
+    print('3. Execute saved joint position (via /joint_command)')
+    print('4. Execute saved cartesian pose (via /cartesian_command)')
     print('0. Exit (disables teach mode)')
     print()
 
@@ -169,6 +205,9 @@ def main():
     for _ in range(20):
         rclpy.spin_once(node, timeout_sec=0.1)
 
+    saved_joints = None
+    saved_pose = None
+
     try:
         while True:
             print_menu()
@@ -181,11 +220,14 @@ def main():
             if choice == '1':
                 joints = node.get_joint_positions()
                 if joints:
+                    deg_list = [round(math.degrees(joints[j]), 2) for j in JOINT_NAMES]
                     print('\nJoint positions:')
                     print(f'  Radians: {[f"{joints[j]:.4f}" for j in JOINT_NAMES]}')
-                    print(f'  Degrees: {[f"{math.degrees(joints[j]):.2f}" for j in JOINT_NAMES]}')
-                    deg_list = [round(math.degrees(joints[j]), 2) for j in JOINT_NAMES]
-                    print(f'\n  Service JSON: {json.dumps({"joints": deg_list})}')
+                    print(f'  Degrees: {deg_list}')
+                    cmd = {'joints': deg_list, 'speed': 0.2}
+                    print(f'\n  /joint_command JSON: {json.dumps(cmd)}')
+                    saved_joints = deg_list
+                    print('  (Saved for execution with option 3)')
                 else:
                     print('Joint positions not available.')
 
@@ -196,9 +238,42 @@ def main():
                     print(f'  Position:    x={pose["x"]:.4f}  y={pose["y"]:.4f}  z={pose["z"]:.4f}  (meters)')
                     print(f'  Quaternion:  qx={pose["qx"]:.4f}  qy={pose["qy"]:.4f}  qz={pose["qz"]:.4f}  qw={pose["qw"]:.4f}')
                     sj = {k: round(v, 4) for k, v in pose.items()}
-                    print(f'\n  Service JSON: {json.dumps(sj)}')
+                    sj['speed'] = 0.2
+                    print(f'\n  /cartesian_command JSON: {json.dumps(sj)}')
+                    saved_pose = pose
+                    print('  (Saved for execution with option 4)')
                 else:
                     print('TCP pose not available.')
+
+            elif choice == '3':
+                if saved_joints is None:
+                    print('No joint position saved. Use option 1 first.')
+                else:
+                    print(f'\nDisabling teach mode to execute...')
+                    node.disable_teach_mode()
+                    time.sleep(1.0)
+                    # Wait for services
+                    print('Waiting for /joint_command service...')
+                    node._joint_client.wait_for_service(timeout_sec=10.0)
+                    node.execute_joint_position(saved_joints)
+                    time.sleep(0.5)
+                    print('Re-enabling teach mode...')
+                    node.enable_teach_mode()
+
+            elif choice == '4':
+                if saved_pose is None:
+                    print('No cartesian pose saved. Use option 2 first.')
+                else:
+                    print(f'\nDisabling teach mode to execute...')
+                    node.disable_teach_mode()
+                    time.sleep(1.0)
+                    # Wait for services
+                    print('Waiting for /cartesian_command service...')
+                    node._cartesian_client.wait_for_service(timeout_sec=10.0)
+                    node.execute_cartesian_pose(saved_pose)
+                    time.sleep(0.5)
+                    print('Re-enabling teach mode...')
+                    node.enable_teach_mode()
 
             elif choice == '0':
                 print('Disabling teach mode...')
