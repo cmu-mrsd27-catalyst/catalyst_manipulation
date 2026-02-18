@@ -18,6 +18,7 @@ from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
+from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
 
 from catalyst_interfaces.srv import GripperCommand
@@ -75,6 +76,11 @@ class GripperNode(Node):
         # Publisher: joint states for robot_state_publisher
         self._joint_state_pub = self.create_publisher(
             JointState, '/joint_states', 10
+        )
+
+        # Publisher: gripper state for world model
+        self._gripper_state_pub = self.create_publisher(
+            String, '/gripper_state', 10
         )
 
         # Timer: publish joint states at configured rate
@@ -171,10 +177,11 @@ class GripperNode(Node):
         return response
 
     def _publish_joint_state(self):
-        """Publish current gripper joint state from real servo position."""
+        """Publish current gripper joint state and gripper state."""
         try:
             with self._servo_lock:
                 data = self._gripper.get_data()
+                grasping = self._gripper.is_grasping()
             meters = self._ticks_to_meters(data['position'])
         except RuntimeError:
             return  # skip this cycle if read fails
@@ -186,6 +193,27 @@ class GripperNode(Node):
         msg.velocity = [0.0]
         msg.effort = [0.0]
         self._joint_state_pub.publish(msg)
+
+        # Determine gripper state
+        if grasping:
+            state = 'holding'
+        elif meters < 0.005:
+            state = 'closed'
+        elif meters > 0.03:
+            state = 'open'
+        else:
+            state = 'moving'
+
+        gripper_msg = String()
+        gripper_msg.data = json.dumps({
+            'position_ticks': data['position'],
+            'position_meters': round(meters, 6),
+            'velocity': data.get('velocity', 0),
+            'torque': data.get('torque', 0),
+            'is_grasping': grasping,
+            'state': state,
+        })
+        self._gripper_state_pub.publish(gripper_msg)
 
     def destroy_node(self):
         self.get_logger().info('Shutting down gripper node')

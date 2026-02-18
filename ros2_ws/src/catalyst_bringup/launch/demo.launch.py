@@ -415,10 +415,26 @@ def generate_launch_description():
         )
     )
 
+    # ── World Model Node ──
+    world_model_node = Node(
+        package='catalyst_world_model',
+        executable='world_model',
+        name='world_model_node',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+    delayed_world_model = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=xarm6_controller_spawner,
+            on_exit=[TimerAction(period=3.0, actions=[world_model_node])],
+        )
+    )
+
     actions.append(delayed_move_group)
     actions.append(delayed_rviz)
     actions.append(delayed_motion_planner)
     actions.append(delayed_scene_manager)
+    actions.append(delayed_world_model)
 
     return LaunchDescription([
         DeclareLaunchArgument(
