@@ -27,6 +27,7 @@ from launch.actions import (
     ExecuteProcess,
     RegisterEventHandler,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
@@ -114,7 +115,7 @@ def generate_launch_description():
     with open(srdf_path, 'r') as f:
         robot_description_semantic = {'robot_description_semantic': f.read()}
 
-    kinematics_yaml = load_yaml('moveit_config', 'config/kinematics.yaml')
+    kinematics_yaml = {'robot_description_kinematics': load_yaml('moveit_config', 'config/kinematics.yaml')}
     joint_limits_yaml = load_yaml('moveit_config', 'config/joint_limits.yaml')
     ompl_planning_yaml = load_yaml('moveit_config', 'config/ompl_planning.yaml')
     controllers_yaml = load_yaml('moveit_config', 'config/controllers.yaml')
@@ -293,6 +294,39 @@ def generate_launch_description():
         ],
     )
 
+    # ── Scene Manager (collision objects for planning scene) ──
+    gazebo_pkg_dir = get_package_share_directory('catalyst_gazebo')
+    world_objects_yaml_path = os.path.join(gazebo_pkg_dir, 'config', 'world_objects.yaml')
+
+    scene_manager_node = Node(
+        package='catalyst_motion_planner',
+        executable='scene_manager',
+        name='scene_manager',
+        output='screen',
+        parameters=[
+            {'robot_description': urdf_content},
+            robot_description_semantic,
+            {'use_sim_time': use_sim_time},
+            {'world_objects_yaml': world_objects_yaml_path},
+            {'base_frame_z': 0.80},
+        ],
+    )
+
+    # ── Motion Planner (C++ MoveGroupInterface node) ──
+    motion_planner_node = Node(
+        package='catalyst_motion_planner',
+        executable='motion_planner',
+        name='motion_planner',
+        output='screen',
+        parameters=[
+            {'robot_description': urdf_content},
+            robot_description_semantic,
+            kinematics_yaml,
+            {'use_sim_time': use_sim_time},
+            {'enable_gripper_service': not is_real},
+        ],
+    )
+
     # ── RViz ──
     rviz_node = Node(
         package='rviz2',
@@ -364,8 +398,27 @@ def generate_launch_description():
         )
     )
 
+    # Motion planner needs move_group to be fully up (joint_states flowing).
+    # Launch it a few seconds after move_group starts.
+    delayed_motion_planner = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=xarm6_controller_spawner,
+            on_exit=[TimerAction(period=5.0, actions=[motion_planner_node])],
+        )
+    )
+
+    # Scene manager also needs move_group for PlanningSceneInterface
+    delayed_scene_manager = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=xarm6_controller_spawner,
+            on_exit=[TimerAction(period=5.0, actions=[scene_manager_node])],
+        )
+    )
+
     actions.append(delayed_move_group)
     actions.append(delayed_rviz)
+    actions.append(delayed_motion_planner)
+    actions.append(delayed_scene_manager)
 
     return LaunchDescription([
         DeclareLaunchArgument(
