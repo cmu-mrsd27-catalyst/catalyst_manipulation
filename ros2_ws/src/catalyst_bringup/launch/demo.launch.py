@@ -25,12 +25,14 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
+    IncludeLaunchDescription,
     RegisterEventHandler,
     SetEnvironmentVariable,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -429,6 +431,25 @@ def generate_launch_description():
             on_exit=[TimerAction(period=3.0, actions=[world_model_node])],
         )
     )
+
+    # ── Vision (real hardware only — requires RealSense camera) ──
+    # if is_real:
+    #     vision_launch = IncludeLaunchDescription(
+    #         PythonLaunchDescriptionSource(
+    #             os.path.join(
+    #                 get_package_share_directory('catalyst_vision'),
+    #                 'launch',
+    #                 'detection_launch.py',
+    #             )
+    #         )
+    #     )
+    #     delayed_vision = RegisterEventHandler(
+    #         event_handler=OnProcessExit(
+    #             target_action=xarm6_controller_spawner,
+    #             on_exit=[TimerAction(period=3.0, actions=[vision_launch])],
+    #         )
+    #     )
+    #     actions.append(delayed_vision)
 
     actions.append(delayed_move_group)
     actions.append(delayed_rviz)

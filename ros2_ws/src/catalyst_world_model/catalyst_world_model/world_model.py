@@ -1,8 +1,9 @@
 """
 World Model Node — central state aggregator for the Catalyst Manipulator.
 
-Subscribes to joint states, gripper state, robot status, and TF2,
-then publishes a unified JSON dictionary on /world_model at 10 Hz.
+Subscribes to joint states, gripper state, robot status, AprilTag
+detections, and TF2, then publishes a unified JSON dictionary on
+/world_model at 10 Hz.
 """
 
 import json
@@ -16,6 +17,8 @@ from std_msgs.msg import String
 from sensor_msgs.msg import JointState
 
 import tf2_ros
+
+from apriltag_msgs.msg import AprilTagDetectionArray
 
 # Optional: only available on real hardware with xarm_msgs built
 try:
@@ -40,6 +43,15 @@ ROBOT_STATE_NAMES = {
 # this window, fall back to joint_states finger position.
 GRIPPER_TOPIC_TIMEOUT = 2.0
 
+# AprilTag detection timeout (seconds) — detections older than this are dropped.
+APRILTAG_TIMEOUT = 1.0
+
+# Tag ID to semantic frame name mapping
+TAG_FRAME_NAMES = {
+    0: 'tag_base',
+    1: 'tag_object',
+}
+
 
 class WorldModel(Node):
 
@@ -53,6 +65,8 @@ class WorldModel(Node):
         self._gripper_state_time = None  # Time of last /gripper_state msg
         self._finger_position = None  # from /joint_states right_finger_joint
         self._robot_status = None    # latest RobotMsg fields
+        self._apriltag_detections = []  # latest AprilTagDetectionArray
+        self._apriltag_time = None      # Time of last detection msg
 
         # ── TF2 ──
         self._tf_buffer = tf2_ros.Buffer()
@@ -64,6 +78,9 @@ class WorldModel(Node):
         )
         self.create_subscription(
             String, '/gripper_state', self._gripper_state_cb, 10
+        )
+        self.create_subscription(
+            AprilTagDetectionArray, '/detections', self._apriltag_cb, 10
         )
         if HAS_XARM_MSGS:
             self.create_subscription(
@@ -97,6 +114,10 @@ class WorldModel(Node):
         except json.JSONDecodeError:
             pass
 
+    def _apriltag_cb(self, msg: AprilTagDetectionArray):
+        self._apriltag_detections = msg.detections
+        self._apriltag_time = self.get_clock().now()
+
     def _robot_states_cb(self, msg):
         self._robot_status = {
             'state': msg.state,
@@ -118,7 +139,7 @@ class WorldModel(Node):
             'joint_states': self._build_joint_states(),
             'tcp_pose': self._build_tcp_pose(),
             'gripper': self._build_gripper(now),
-            'apriltags': [],
+            'apriltags': self._build_apriltags(now),
             'robot_status': self._build_robot_status(),
         }
 
@@ -212,6 +233,57 @@ class WorldModel(Node):
             'torque': None,
             'source': 'unavailable',
         }
+
+    def _build_apriltags(self, now):
+        # Return empty list if detections are stale or absent
+        if (self._apriltag_time is None
+                or (now - self._apriltag_time).nanoseconds / 1e9 > APRILTAG_TIMEOUT):
+            return []
+
+        tags = []
+        for det in self._apriltag_detections:
+            tag_id = det.id
+            frame = TAG_FRAME_NAMES.get(tag_id, f'tag_{tag_id}')
+
+            # Look up pose in link_base frame via TF2
+            pose_in_base = None
+            try:
+                tf = self._tf_buffer.lookup_transform(
+                    'link_base', frame, Time()
+                )
+                t = tf.transform.translation
+                r = tf.transform.rotation
+                roll, pitch, yaw = self._quat_to_euler(r.x, r.y, r.z, r.w)
+                pose_in_base = {
+                    'position': {
+                        'x': round(t.x, 6),
+                        'y': round(t.y, 6),
+                        'z': round(t.z, 6),
+                    },
+                    'orientation': {
+                        'qx': round(r.x, 6),
+                        'qy': round(r.y, 6),
+                        'qz': round(r.z, 6),
+                        'qw': round(r.w, 6),
+                    },
+                    'orientation_euler_deg': {
+                        'roll': round(math.degrees(roll), 4),
+                        'pitch': round(math.degrees(pitch), 4),
+                        'yaw': round(math.degrees(yaw), 4),
+                    },
+                }
+            except (tf2_ros.LookupException,
+                    tf2_ros.ConnectivityException,
+                    tf2_ros.ExtrapolationException):
+                pass
+
+            tags.append({
+                'id': tag_id,
+                'frame': frame,
+                'pose_in_base': pose_in_base,
+            })
+
+        return tags
 
     def _build_robot_status(self):
         if self._robot_status is not None:

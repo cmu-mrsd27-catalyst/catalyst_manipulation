@@ -158,7 +158,7 @@ def main():
     # time.sleep(0.5)
 
     # 3. Move to specific joint angles (degrees)
-    # node.move_joints([0, -30, 0, 0, -90, 0])
+    # node.move_joints([0, -30, 0, 0, -90, 0], 0.1)
 
     # 4. Move to a cartesian pose (meters + quaternion)
     #    Example: same as home TCP pose from tf2_echo

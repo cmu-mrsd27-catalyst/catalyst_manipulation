@@ -25,20 +25,37 @@ def generate_launch_description():
     )
 
     # Static transform from link_eef to camera_color_optical_frame
+    # static_tf = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     name='hand_eye_tf',
+    #     arguments=[
+    #         '--x', '0.06474074351789574',
+    #         '--y', '-0.02079755382336791',
+    #         '--z', '-0.043061004427683805',
+    #         '--qx', '0.49950804885434386',
+    #         '--qy', '0.4944359129754877',
+    #         '--qz', '0.4926799984086548',
+    #         '--qw', '0.5131191443104329',
+    #         '--frame-id', 'link_eef',
+    #         '--child-frame-id', 'camera_color_optical_frame',
+    #     ]
+    # )
+
     static_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='hand_eye_tf',
         arguments=[
-            '--x', '0.06474074351789574',
-            '--y', '-0.02079755382336791',
-            '--z', '-0.043061004427683805',
-            '--qx', '0.49950804885434386',
-            '--qy', '0.4944359129754877',
-            '--qz', '0.4926799984086548',
-            '--qw', '0.5131191443104329',
+            '--x', '0.0654',
+            '--y', '-0.0060',
+            '--z', '-0.0432',
+            '--qx', '0.99987472',
+            '--qy', '-0.01323747',
+            '--qz', '0.00602578',
+            '--qw', '0.00624568',
             '--frame-id', 'link_eef',
-            '--child-frame-id', 'camera_color_optical_frame',
+            '--child-frame-id', 'camera_link',
         ]
     )
 
