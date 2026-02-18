@@ -123,7 +123,7 @@ def main():
     time.sleep(0.5)
 
     print("Moving to 1st pose")
-    node.move_cartesian(0.764, -0.0813, 0.0908, 0.9991, -0.0408, 0.0038, 0.0124, 0.2)
+    node.move_cartesian(0.54, -0.0813, 0.0908, 0.9991, -0.0408, 0.0038, 0.0124, 0.2)
     time.sleep(1)
 
     print("Moving to 2nd pose")
