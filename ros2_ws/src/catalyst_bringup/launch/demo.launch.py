@@ -294,6 +294,24 @@ def generate_launch_description():
         ],
     )
 
+    # ── Scene Manager (collision objects for planning scene) ──
+    gazebo_pkg_dir = get_package_share_directory('catalyst_gazebo')
+    world_objects_yaml_path = os.path.join(gazebo_pkg_dir, 'config', 'world_objects.yaml')
+
+    scene_manager_node = Node(
+        package='catalyst_motion_planner',
+        executable='scene_manager',
+        name='scene_manager',
+        output='screen',
+        parameters=[
+            {'robot_description': urdf_content},
+            robot_description_semantic,
+            {'use_sim_time': use_sim_time},
+            {'world_objects_yaml': world_objects_yaml_path},
+            {'base_frame_z': 0.80},
+        ],
+    )
+
     # ── Motion Planner (C++ MoveGroupInterface node) ──
     motion_planner_node = Node(
         package='catalyst_motion_planner',
@@ -389,9 +407,18 @@ def generate_launch_description():
         )
     )
 
+    # Scene manager also needs move_group for PlanningSceneInterface
+    delayed_scene_manager = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=xarm6_controller_spawner,
+            on_exit=[TimerAction(period=5.0, actions=[scene_manager_node])],
+        )
+    )
+
     actions.append(delayed_move_group)
     actions.append(delayed_rviz)
     actions.append(delayed_motion_planner)
+    actions.append(delayed_scene_manager)
 
     return LaunchDescription([
         DeclareLaunchArgument(

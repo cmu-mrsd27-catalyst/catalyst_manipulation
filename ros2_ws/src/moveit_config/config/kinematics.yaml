@@ -11,9 +11,9 @@ xarm6:
 #     kinematics_solver: pick_ik/PickIkPlugin
 #     kinematics_solver_timeout: 2.0
 #     kinematics_solver_attempts: 20
-#     mode: global # Uses the evolutionary algorithm to find the closest joints
+#     mode: local # Uses the evolutionary algorithm to find the closest joints
 #     position_scale: 1.0
 #     rotation_scale: 1.0
-#     position_threshold: 0.01       # Relaxed to 5 millimeters
+#     position_threshold: 0.005       # Relaxed to 5 millimeters
 #     orientation_threshold: 0.05
-#     minimal_displacement_weight: 5.0 # This specific parameter prevents the wrist flip!
+    # minimal_displacement_weight: 0.005 # This specific parameter prevents the wrist flip!

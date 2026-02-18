@@ -61,7 +61,7 @@ planner_configs:
 
 # xArm-6 planning group configuration
 xarm6:
-  default_planner_config: RRTConnect
+  default_planner_config: RRTstar
   planner_configs:
     - SBL
     - EST

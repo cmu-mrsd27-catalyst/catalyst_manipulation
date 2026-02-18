@@ -13,6 +13,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(catalyst_interfaces REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(geometric_shapes REQUIRED)
+find_package(shape_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
 
 add_executable(motion_planner src/motion_planner_node.cpp)
 target_compile_features(motion_planner PUBLIC cxx_std_17)
@@ -26,7 +29,20 @@ ament_target_dependencies(
 )
 target_link_libraries(motion_planner nlohmann_json::nlohmann_json)
 
-install(TARGETS motion_planner
+add_executable(scene_manager src/scene_manager_node.cpp)
+target_compile_features(scene_manager PUBLIC cxx_std_17)
+ament_target_dependencies(
+  scene_manager
+  rclcpp
+  moveit_ros_planning_interface
+  geometric_shapes
+  shape_msgs
+  moveit_msgs
+  catalyst_interfaces
+)
+target_link_libraries(scene_manager nlohmann_json::nlohmann_json yaml-cpp)
+
+install(TARGETS motion_planner scene_manager
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

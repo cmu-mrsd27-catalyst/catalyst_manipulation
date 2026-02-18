@@ -55,8 +55,8 @@ int main(int argc, char** argv)
 
     arm.setPoseReferenceFrame(BASE_FRAME);
     arm.setEndEffectorLink(EE_LINK);
-    // arm.setPlanningTime(30.0);
-    // arm.setNumPlanningAttempts(10);
+    arm.setPlanningTime(30);
+    arm.setNumPlanningAttempts(10);
 
     RCLCPP_INFO(logger, "MoveGroupInterface ready for '%s'", PLANNING_GROUP_ARM.c_str());
 
