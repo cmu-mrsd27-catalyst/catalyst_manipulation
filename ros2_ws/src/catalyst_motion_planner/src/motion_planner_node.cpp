@@ -55,8 +55,8 @@ int main(int argc, char** argv)
 
     arm.setPoseReferenceFrame(BASE_FRAME);
     arm.setEndEffectorLink(EE_LINK);
-    arm.setPlanningTime(30);
-    arm.setNumPlanningAttempts(10);
+    // arm.setPlanningTime(30);
+    // arm.setNumPlanningAttempts(10);
 
     RCLCPP_INFO(logger, "MoveGroupInterface ready for '%s'", PLANNING_GROUP_ARM.c_str());
 
@@ -249,7 +249,7 @@ int main(int argc, char** argv)
                     }
                     current_state->setJointGroupPositions(jmg, seed);
 
-                    if (current_state->setFromIK(jmg, target, 0.1)) {
+                    if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
                         std::vector<double> solution;
                         current_state->copyJointGroupPositions(jmg, solution);
 

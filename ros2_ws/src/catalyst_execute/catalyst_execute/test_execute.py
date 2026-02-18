@@ -123,15 +123,15 @@ def main():
     time.sleep(0.5)
 
     print("Moving to 1st pose")
-    node.move_cartesian(0.764, -0.0813, 0.0508, 0.9991, -0.0408, 0.0038, 0.0124, 0.2)
+    node.move_cartesian(0.764, -0.0813, 0.0908, 0.9991, -0.0408, 0.0038, 0.0124, 0.2)
     time.sleep(1)
 
     print("Moving to 2nd pose")
-    node.move_cartesian(0.342, -0.0, 0.057, 1.0, 0.0, 0.0, 0.0, 0.2)
+    node.move_cartesian(0.342, -0.0, 0.157, 1.0, 0.0, 0.0, 0.0, 0.2)
     time.sleep(1)
 
     print("Moving to 3rd pose")
-    node.move_cartesian(0.4862, -0.1821, 0.0494, 0.8899, -0.4536, 0.0473, -0.0085, 0.2)
+    node.move_cartesian(0.4862, -0.1821, 0.1494, 0.8899, -0.4536, 0.0473, -0.0085, 0.2)
     time.sleep(1)
 
     print("Moving to 4th pose")

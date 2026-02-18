@@ -5,9 +5,9 @@
 
 request_adapters: >-
   default_planner_request_adapters/AddTimeOptimalParameterization
-# default_planner_request_adapters/FixWorkspaceBounds
-# default_planner_request_adapters/FixStartStateBounds
-# default_planner_request_adapters/FixStartStateCollision
+  default_planner_request_adapters/FixStartStateBounds
+  default_planner_request_adapters/FixStartStateCollision
+# default_planner_request_adapters/FixWorkspaceBounds  
 # default_planner_request_adapters/FixStartStatePathConstraints
 start_state_max_bounds_error: 0.1
 
@@ -61,7 +61,7 @@ planner_configs:
 
 # xArm-6 planning group configuration
 xarm6:
-  default_planner_config: RRTstar
+  default_planner_config: RRTConnect
   planner_configs:
     - SBL
     - EST
