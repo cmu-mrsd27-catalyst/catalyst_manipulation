@@ -31,8 +31,8 @@ class TestExecuteNode(Node):
         self.target_frame = "link_base"
         self.source_frame = "link_tcp"
 
-        self._joint_client = self.create_client(GripperCommand, JOINT_SERVICE)
-        self._cartesian_client = self.create_client(GripperCommand, CARTESIAN_SERVICE)
+        # self._joint_client = self.create_client(GripperCommand, JOINT_SERVICE)
+        # self._cartesian_client = self.create_client(GripperCommand, CARTESIAN_SERVICE)
         self._gripper_client = self.create_client(GripperCommand, GRIPPER_SERVICE)
 
     def get_link_pose(self, target_frame: str, source_frame: str):
@@ -63,10 +63,10 @@ class TestExecuteNode(Node):
                 math.degrees(self.joint_state[5])]   
     
     def wait_for_services(self):
-        self.get_logger().info('Waiting for arm_control services...')
-        self._joint_client.wait_for_service()
-        self._cartesian_client.wait_for_service()
-        self.get_logger().info('Waiting for gripper service...')
+        # self.get_logger().info('Waiting for arm_control services...')
+        # self._joint_client.wait_for_service()
+        # self._cartesian_client.wait_for_service()
+        # self.get_logger().info('Waiting for gripper service...')
         self._gripper_client.wait_for_service()
         self.get_logger().info('All services ready.')
 
@@ -116,37 +116,39 @@ def main():
     node.get_logger().info('=== Starting test sequence ===')
     # node.get_link_pose("link_base", "link_tcp")
 
+    node.close_gripper()
+
     # 1. Go to home
-    node.move_pose('home', speed=0.2)
-    time.sleep(0.5)
-    node.open_gripper()
-    time.sleep(0.5)
+    # node.move_pose('home', speed=0.2)
+    # time.sleep(0.5)
+    # node.open_gripper()
+    # time.sleep(0.5)
 
-    print("Moving to 1st pose")
-    node.move_cartesian(0.54, -0.0813, 0.0908, 0.9991, -0.0408, 0.0038, 0.0124, 0.2)
-    time.sleep(1)
+    # print("Moving to 1st pose")
+    # node.move_cartesian(0.54, -0.0813, 0.0908, 0.9991, -0.0408, 0.0038, 0.0124, 0.2)
+    # time.sleep(1)
 
-    print("Moving to 2nd pose")
-    node.move_cartesian(0.342, -0.0, 0.157, 1.0, 0.0, 0.0, 0.0, 0.2)
-    time.sleep(1)
+    # print("Moving to 2nd pose")
+    # node.move_cartesian(0.342, -0.0, 0.157, 1.0, 0.0, 0.0, 0.0, 0.2)
+    # time.sleep(1)
 
-    print("Moving to 3rd pose")
-    node.move_cartesian(0.4862, -0.1821, 0.1494, 0.8899, -0.4536, 0.0473, -0.0085, 0.2)
-    time.sleep(1)
+    # print("Moving to 3rd pose")
+    # node.move_cartesian(0.4862, -0.1821, 0.1494, 0.8899, -0.4536, 0.0473, -0.0085, 0.2)
+    # time.sleep(1)
 
-    print("Moving to 4th pose")
-    node.move_cartesian(0.4375, 0.2277, 0.0734, 0.9151, 0.4006, -0.0187, 0.0409, 0.2)
-    time.sleep(1)
+    # print("Moving to 4th pose")
+    # node.move_cartesian(0.4375, 0.2277, 0.0734, 0.9151, 0.4006, -0.0187, 0.0409, 0.2)
+    # time.sleep(1)
 
-    print("Moving to 5th pose")
-    node.move_cartesian(0.0035, 0.4861, 0.0266, 0.7083, 0.7056, 0.018, 0.0103, 0.2)
-    time.sleep(1)
+    # print("Moving to 5th pose")
+    # node.move_cartesian(0.0035, 0.4861, 0.0266, 0.7083, 0.7056, 0.018, 0.0103, 0.2)
+    # time.sleep(1)
 
-    print("Moving to 6th pose")
-    node.move_cartesian(0.0887, -0.433, 0.0345, 0.7126, -0.7011, -0.0217, -0.0091, 0.2)
-    time.sleep(1)
+    # print("Moving to 6th pose")
+    # node.move_cartesian(0.0887, -0.433, 0.0345, 0.7126, -0.7011, -0.0217, -0.0091, 0.2)
+    # time.sleep(1)
 
-    node.move_pose('home', speed=0.2)
+    # node.move_pose('home', speed=0.2)
     
     # node.move_joints([-5.9, 31.23, -82.67, 2.59, 54.86, 0.44], speed = 0.2)
     # time.sleep(0.5)

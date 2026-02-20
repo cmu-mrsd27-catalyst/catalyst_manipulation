@@ -10,6 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/config', ['config/gripper_pose.json']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,6 +23,8 @@ setup(
         'console_scripts': [
             'test_execute = catalyst_execute.test_execute:main',
             'guide_mode = catalyst_execute.guide_mode:main',
+            'test_apriltag_grasping = catalyst_execute.test_apriltag_grasping:main',
+            'plot_grasp_log = catalyst_execute.plot_grasp_log:main',
         ],
     },
 )

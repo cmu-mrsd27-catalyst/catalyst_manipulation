@@ -65,10 +65,10 @@ class GripperNode(Node):
         self._service_cb_group = ReentrantCallbackGroup()
         self._timer_cb_group = ReentrantCallbackGroup()
 
-        # Service: ~/gripper_command
+        # Service: /gripper_command
         self._srv = self.create_service(
             GripperCommand,
-            '~/gripper_command',
+            '/gripper_command',
             self._handle_gripper_command,
             callback_group=self._service_cb_group,
         )

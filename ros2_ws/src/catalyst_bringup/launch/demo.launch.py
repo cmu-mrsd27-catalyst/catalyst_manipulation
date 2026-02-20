@@ -189,17 +189,7 @@ def generate_launch_description():
         )
         actions.append(controller_manager_node)
 
-    # Joint state publisher for real mode
     if is_real:
-        joint_state_publisher_node = Node(
-            package='joint_state_publisher',
-            executable='joint_state_publisher',
-            parameters=[{'use_sim_time': use_sim_time}],
-            remappings=[('joint_states', '/joint_states')],
-            output='screen',
-        )
-        actions.append(joint_state_publisher_node)
-
         # Gripper node (real hardware only — sim modes use bio_gripper_controller)
         gripper_pkg = get_package_share_directory('catalyst_gripper')
         gripper_config_path = os.path.join(gripper_pkg, 'config', 'gripper_params.yaml')
@@ -433,23 +423,23 @@ def generate_launch_description():
     )
 
     # ── Vision (real hardware only — requires RealSense camera) ──
-    # if is_real:
-    #     vision_launch = IncludeLaunchDescription(
-    #         PythonLaunchDescriptionSource(
-    #             os.path.join(
-    #                 get_package_share_directory('catalyst_vision'),
-    #                 'launch',
-    #                 'detection_launch.py',
-    #             )
-    #         )
-    #     )
-    #     delayed_vision = RegisterEventHandler(
-    #         event_handler=OnProcessExit(
-    #             target_action=xarm6_controller_spawner,
-    #             on_exit=[TimerAction(period=3.0, actions=[vision_launch])],
-    #         )
-    #     )
-    #     actions.append(delayed_vision)
+    if is_real:
+        vision_launch = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory('catalyst_vision'),
+                    'launch',
+                    'detection_launch.py',
+                )
+            )
+        )
+        delayed_vision = RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=xarm6_controller_spawner,
+                on_exit=[TimerAction(period=3.0, actions=[vision_launch])],
+            )
+        )
+        actions.append(delayed_vision)
 
     actions.append(delayed_move_group)
     actions.append(delayed_rviz)
