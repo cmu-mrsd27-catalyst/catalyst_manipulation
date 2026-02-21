@@ -1,0 +1,132 @@
+# =============================================================================
+# World Objects Configuration for Catalyst Gazebo Simulation
+# =============================================================================
+#
+# This file defines the dimensions and positions of objects in the Gazebo world.
+# Modify these values to customize your simulation environment.
+#
+# UNITS: All dimensions in meters, angles in radians
+#
+# COORDINATE SYSTEM:
+#   X: Forward (positive = in front of robot)
+#   Y: Left (positive = robot's left side)
+#   Z: Up (positive = upward)
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Robot Stand
+# -----------------------------------------------------------------------------
+# A vertical cuboid that the robot is mounted on.
+# The robot base (link_base) will be placed at the TOP of this stand.
+#
+robot_stand:
+  # Dimensions of the stand (cuboid)
+  size:
+    x: 0.50          # Width (left-right when facing robot)
+    y: 0.50          # Depth (front-back)
+    z: 0.80          # Height
+
+  # Position of the stand CENTER in world frame
+  # Note: Robot will be at z + size.z/2 (top of stand)
+  position:
+    x: 0.0
+    y: 0.0
+    z: 0.40          # Half of height (so bottom is at z=0)
+
+  # Appearance
+  color:
+    r: 0.3
+    g: 0.3
+    b: 0.3
+    a: 1.0
+
+  # Physics
+  static: true       # Stand doesn't move
+
+# -----------------------------------------------------------------------------
+# Work Table
+# -----------------------------------------------------------------------------
+# A table in front of the robot for placing objects.
+# Table top height matches the robot stand height.
+#
+work_table:
+  # Table top dimensions
+  top:
+    x: 0.80          # Width
+    y: 0.60          # Depth
+    z: 0.03          # Thickness
+
+  # Table legs (4 legs at corners)
+  legs:
+    radius: 0.03     # Leg radius (cylindrical legs)
+    # Height is auto-calculated to match stand height
+
+  # Position of table CENTER in world frame
+  # X offset: gap between stand and table
+  position:
+    x: 0.55          # Distance from robot (stand center + stand.size.y/2 + gap + table.top.y/2)
+    y: 0.0           # Centered with robot
+    z: 0.0           # Ground level (legs will be calculated)
+
+  # Gap between robot stand and table edge
+  gap_from_stand: 0.05
+
+  # Appearance
+  color:
+    r: 0.6
+    g: 0.4
+    b: 0.2
+    a: 1.0
+
+  # Physics
+  static: true
+
+# -----------------------------------------------------------------------------
+# Robot Spawn Configuration
+# -----------------------------------------------------------------------------
+# Where to spawn the robot in the world.
+# Robot is placed on TOP of the stand.
+#
+robot:
+  # Position offset from world origin
+  # Z is auto-calculated: stand.position.z + stand.size.z/2
+  position:
+    x: 0.0
+    y: 0.0
+    z: 0.80          # Top of stand (0.40 + 0.80/2 = 0.80)
+
+  # Orientation (roll, pitch, yaw)
+  orientation:
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0         # Facing +X direction
+
+# -----------------------------------------------------------------------------
+# Ground Plane
+# -----------------------------------------------------------------------------
+ground:
+  size:
+    x: 10.0
+    y: 10.0
+  color:
+    r: 0.8
+    g: 0.8
+    b: 0.8
+    a: 1.0
+
+# -----------------------------------------------------------------------------
+# Lighting
+# -----------------------------------------------------------------------------
+lighting:
+  # Sun/directional light
+  sun:
+    direction:
+      x: -0.5
+      y: 0.1
+      z: -0.9
+    diffuse:
+      r: 0.8
+      g: 0.8
+      b: 0.8
+      a: 1.0

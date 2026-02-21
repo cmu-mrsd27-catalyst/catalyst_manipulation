@@ -1,0 +1,102 @@
+# OMPL Planning configuration for Catalyst Manipulator
+# Aligned with xarm_ros2 conventions (Jazzy format)
+#
+# Configures the OMPL motion planners available for path planning
+
+planning_plugins:
+  - ompl_interface/OMPLPlanner
+
+request_adapters:
+  - default_planning_request_adapters/ResolveConstraintFrames
+  - default_planning_request_adapters/ValidateWorkspaceBounds
+  - default_planning_request_adapters/CheckStartStateBounds
+  - default_planning_request_adapters/CheckStartStateCollision
+
+response_adapters:
+  - default_planning_response_adapters/AddTimeOptimalParameterization
+  - default_planning_response_adapters/ValidateSolution
+  - default_planning_response_adapters/DisplayMotionPath
+
+start_state_max_bounds_error: 0.1
+
+planner_configs:
+  SBL:
+    type: geometric::SBL
+  EST:
+    type: geometric::EST
+  LBKPIECE:
+    type: geometric::LBKPIECE
+  BKPIECE:
+    type: geometric::BKPIECE
+  KPIECE:
+    type: geometric::KPIECE
+  RRT:
+    type: geometric::RRT
+  RRTConnect:
+    type: geometric::RRTConnect
+  RRTstar:
+    type: geometric::RRTstar
+  TRRT:
+    type: geometric::TRRT
+  PRM:
+    type: geometric::PRM
+  PRMstar:
+    type: geometric::PRMstar
+  FMT:
+    type: geometric::FMT
+  BFMT:
+    type: geometric::BFMT
+  PDST:
+    type: geometric::PDST
+  STRIDE:
+    type: geometric::STRIDE
+  BiTRRT:
+    type: geometric::BiTRRT
+  LBTRRT:
+    type: geometric::LBTRRT
+  BiEST:
+    type: geometric::BiEST
+  ProjEST:
+    type: geometric::ProjEST
+  LazyPRM:
+    type: geometric::LazyPRM
+  LazyPRMstar:
+    type: geometric::LazyPRMstar
+  SPARS:
+    type: geometric::SPARS
+  SPARStwo:
+    type: geometric::SPARStwo
+
+# xArm-6 planning group configuration
+xarm6:
+  default_planner_config: RRTConnect
+  planner_configs:
+    - SBL
+    - EST
+    - LBKPIECE
+    - BKPIECE
+    - KPIECE
+    - RRT
+    - RRTConnect
+    - RRTstar
+    - TRRT
+    - PRM
+    - PRMstar
+    - FMT
+    - BFMT
+    - PDST
+    - STRIDE
+    - BiTRRT
+    - LBTRRT
+    - BiEST
+    - ProjEST
+    - LazyPRM
+    - LazyPRMstar
+    - SPARS
+    - SPARStwo
+
+# Bio gripper planning group configuration
+bio_gripper:
+  default_planner_config: RRTConnect
+  planner_configs:
+    - RRTConnect

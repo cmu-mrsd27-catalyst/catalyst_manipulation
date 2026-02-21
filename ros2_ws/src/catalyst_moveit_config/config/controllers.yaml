@@ -1,0 +1,30 @@
+# Controllers configuration for Catalyst Manipulator
+# Aligned with xarm_ros2 conventions
+#
+# Defines the controllers that MoveIt will use to execute trajectories
+
+controller_names:
+  - xarm6_traj_controller
+  - bio_gripper_controller
+
+# xArm-6 arm trajectory controller
+xarm6_traj_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+
+# Bio gripper controller
+bio_gripper_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    # left_finger_joint mimics right_finger_joint, so only control right
+    - right_finger_joint

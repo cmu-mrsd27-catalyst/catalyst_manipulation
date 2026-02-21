@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Catalyst Manipulator - Semantic Robot Description Format (SRDF)
+  ================================================================
+  Aligned with xarm_ros2 conventions from:
+  https://github.com/xArm-Developer/xarm_ros2/blob/humble/xarm_moveit_config/srdf/_xarm6_macro.srdf.xacro
+
+  Defines:
+    - Planning groups (xarm6, bio_gripper)
+    - End effector configuration
+    - Virtual joint to world
+    - Disabled collision pairs
+-->
+<robot name="catalyst_manipulator">
+
+  <!-- ========== Virtual Joint ========== -->
+  <!-- Connects robot base to world frame for motion planning -->
+  <virtual_joint name="world_joint" type="fixed" parent_frame="world" child_link="link_base"/>
+
+  <!-- ========== Planning Groups ========== -->
+
+  <!-- Arm group: xArm-6 joints (6-DOF) -->
+  <group name="xarm6">
+    <chain base_link="link_base" tip_link="link_eef"/>
+  </group>
+
+  <!-- Gripper group: Bio gripper (only right finger - left is mimic) -->
+  <group name="bio_gripper">
+    <joint name="right_finger_joint"/>
+    <!-- Note: left_finger_joint is a mimic joint, not included in planning group -->
+  </group>
+
+  <!-- Combined group: xArm-6 arm + bio gripper -->
+  <group name="xarm6_with_gripper">
+    <chain base_link="link_base" tip_link="link_eef"/>
+    <joint name="right_finger_joint"/>
+  </group>
+
+  <!-- ========== Group States (Named Poses) ========== -->
+
+  <!-- Arm home position (all joints at zero) -->
+  <group_state name="home" group="xarm6">
+    <joint name="joint1" value="0"/>
+    <joint name="joint2" value="0"/>
+    <joint name="joint3" value="0"/>
+    <joint name="joint4" value="0"/>
+    <joint name="joint5" value="0"/>
+    <joint name="joint6" value="0"/>
+  </group_state>
+
+  <!-- Arm hold-up position (joint5 at -90 degrees) -->
+  <group_state name="hold_up" group="xarm6">
+    <joint name="joint1" value="0"/>
+    <joint name="joint2" value="0"/>
+    <joint name="joint3" value="0"/>
+    <joint name="joint4" value="0"/>
+    <joint name="joint5" value="-1.5708"/>
+    <joint name="joint6" value="0"/>
+  </group_state>
+
+  <!-- Gripper open position -->
+  <group_state name="open" group="bio_gripper">
+    <joint name="right_finger_joint" value="0.04"/>
+  </group_state>
+
+  <!-- Gripper closed position -->
+  <group_state name="close" group="bio_gripper">
+    <joint name="right_finger_joint" value="0"/>
+  </group_state>
+
+  <!-- ========== End Effector ========== -->
+  <end_effector name="bio_gripper" parent_link="link_eef" group="bio_gripper" parent_group="xarm6"/>
+
+  <!-- ========== Passive Joints ========== -->
+  <!-- Left finger mimics right finger, so mark it as passive for planning -->
+  <passive_joint name="left_finger_joint"/>
+
+  <!-- ========== Disabled Collisions ========== -->
+  <!-- Based on xarm_ros2 collision matrix -->
+
+  <!-- Arm chain: adjacent links -->
+  <disable_collisions link1="link1" link2="link2" reason="Adjacent"/>
+  <disable_collisions link1="link1" link2="link_base" reason="Adjacent"/>
+  <disable_collisions link1="link2" link2="link3" reason="Adjacent"/>
+  <disable_collisions link1="link3" link2="link4" reason="Adjacent"/>
+  <disable_collisions link1="link4" link2="link5" reason="Adjacent"/>
+  <disable_collisions link1="link5" link2="link6" reason="Adjacent"/>
+  <disable_collisions link1="link6" link2="link_eef" reason="Adjacent"/>
+
+  <!-- Arm chain: links that never collide due to distance -->
+  <disable_collisions link1="link1" link2="link3" reason="Never"/>
+  <disable_collisions link1="link2" link2="link4" reason="Never"/>
+  <disable_collisions link1="link2" link2="link_base" reason="Never"/>
+  <disable_collisions link1="link3" link2="link5" reason="Never"/>
+  <disable_collisions link1="link3" link2="link6" reason="Never"/>
+  <disable_collisions link1="link4" link2="link6" reason="Never"/>
+
+  <!-- Bio gripper internal collisions -->
+  <disable_collisions link1="bio_gripper_left_finger" link2="bio_gripper_base_link" reason="Adjacent"/>
+  <disable_collisions link1="bio_gripper_right_finger" link2="bio_gripper_base_link" reason="Adjacent"/>
+  <disable_collisions link1="bio_gripper_left_finger" link2="bio_gripper_right_finger" reason="Never"/>
+
+  <!-- Bio gripper to arm links -->
+  <disable_collisions link1="link6" link2="bio_gripper_base_link" reason="Adjacent"/>
+  <disable_collisions link1="link5" link2="bio_gripper_base_link" reason="Never"/>
+  <disable_collisions link1="link_eef" link2="bio_gripper_base_link" reason="Adjacent"/>
+  <disable_collisions link1="link_eef" link2="bio_gripper_left_finger" reason="Never"/>
+
+  <!-- Bio gripper fingers to arm links -->
+  <disable_collisions link1="bio_gripper_left_finger" link2="link4" reason="Never"/>
+  <disable_collisions link1="bio_gripper_left_finger" link2="link5" reason="Never"/>
+  <disable_collisions link1="bio_gripper_left_finger" link2="link6" reason="Never"/>
+  <disable_collisions link1="bio_gripper_right_finger" link2="link4" reason="Never"/>
+  <disable_collisions link1="bio_gripper_right_finger" link2="link5" reason="Never"/>
+  <disable_collisions link1="bio_gripper_right_finger" link2="link6" reason="Never"/>
+
+</robot>

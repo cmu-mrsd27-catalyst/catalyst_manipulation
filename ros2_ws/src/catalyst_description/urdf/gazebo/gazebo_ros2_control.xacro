@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  Gz Harmonic ros2_control Plugin Configuration
+  ==============================================
+
+  This file adds the gz_ros2_control plugin for Gz Harmonic simulation.
+  It bridges Gz physics with ros2_control controllers.
+
+  NOTE:
+    When using this plugin, pass ros2_control_plugin:=gz_ros2_control/GazeboSimSystem
+    to the robot description xacro.
+-->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:macro name="gazebo_ros2_control_plugin" params="
+    ros2_control_params:='$(find catalyst_bringup)/config/ros2_controllers.yaml'
+  ">
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>${ros2_control_params}</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+
+</robot>

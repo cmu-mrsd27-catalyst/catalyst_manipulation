@@ -1,0 +1,64 @@
+# Serial port connected to the Dynamixel servo
+devicename: "/dev/ttyUSB0"
+
+# Baud rate for serial communication
+baudrate: 1000000
+
+# Dynamixel protocol version (1.0 for AX-18A)
+protocol_version: 1.0
+
+# Servo ID on the Dynamixel bus
+dxl_id: 7
+
+# Minimum position limit (fully open end)
+pos_min: 30
+
+# Maximum position limit (fully closed end)
+pos_max: 720
+
+# Goal position when opening (should be near pos_min)
+open_pos: 30
+
+# Motor speed during opening, range 0..1023 (0 = max rpm)
+open_speed: 90
+
+# Position tolerance in counts — open_gripper() returns when within this range of goal
+open_tol: 5
+
+# Motor speed during closing approach, range 0..1023 (lower = less overshoot)
+close_speed: 150
+
+# Closing direction: +1 if closing increases position, -1 if it decreases
+close_dir: 1
+
+# Stop this many counts before pos_max to avoid mechanical overshoot
+close_stop_margin: 15
+
+# Opposing load threshold for contact detection during close, range 0..1023
+# Detects when load opposes closing direction (object pushing back)
+# Your free-close load is ~+150, object contact flips it to ~-150, so opposing_load ~ 150
+load_threshold: 80
+
+# Number of consecutive load samples above threshold required to confirm contact
+consecutive_hits: 3
+
+# Polling interval in seconds during close loop
+poll_dt: 0.02
+
+# ---- Holding after contact (only applied when object is detected) ----
+
+# Max torque the motor uses to hold the object, range 0..1023 (higher = stronger grip)
+# Motor stays in wheel mode and keeps pushing against the object at hold_speed,
+# but torque is capped at this value so it won't crush the object
+hold_torque_limit: 1023
+
+# Wheel speed to maintain against the object while holding, range 0..1023
+# Low value = gentle sustained push. Motor keeps trying to close at this speed
+# but torque_limit caps the actual force applied
+hold_speed: 30
+
+# ---- Grasp detection (for is_grasping()) ----
+
+# Opposing load threshold to determine if the gripper is holding an object, range 0..1023
+# Checks if load opposes closing direction (object pushing back on gripper)
+grasp_detect_threshold: 50
