@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     wget \
     curl \
+    libcurlpp-dev \
     vim \
     nlohmann-json3-dev \
     libyaml-cpp-dev \
@@ -24,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-moveit-visual-tools \
     ros-jazzy-moveit-servo \
     ros-jazzy-moveit-resources \
+    ros-jazzy-force-torque-sensor-broadcaster \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Gazebo Harmonic + ROS 2 bridge + ros2_control plugin
@@ -31,6 +33,20 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-ros-gz \
     ros-jazzy-gz-ros2-control \
     && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /root/ros2_ws/src
+WORKDIR /root/ros2_ws
+
+# Copy your src folder from the host to the image
+# This allows rosdep to "see" your package.xml files during build
+COPY ./ros2_ws/src /root/ros2_ws/src
+
+# Initialize rosdep (only needed once in the image life)
+# Then install dependencies defined in your package.xml files
+RUN rosdep update && \
+    apt-get update && \
+    rosdep install --from-paths src --ignore-src -y -r && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Intel RealSense SDK
 RUN apt-get update && apt-get install -y software-properties-common \
@@ -49,9 +65,9 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies
 RUN pip3 install --break-system-packages dynamixel-sdk xarm-python-sdk
 
-# Setup workspace directory
-RUN mkdir -p /root/ros2_ws/src
-WORKDIR /root/ros2_ws
+# # Setup workspace directory
+# RUN mkdir -p /root/ros2_ws/src
+# WORKDIR /root/ros2_ws
 
 # Source ROS 2 setup in bashrc
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
