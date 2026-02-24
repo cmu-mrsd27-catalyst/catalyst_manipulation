@@ -179,6 +179,48 @@ git reset HEAD <file>
 git reset --soft HEAD~1
 ```
 
+## Pushing to Multiple Remotes
+
+If you have both a personal repo and an organization repo, you can push to both.
+
+### Add the org repo as a second remote
+
+```bash
+git remote add org https://github.com/<org-name>/<repo-name>.git
+```
+
+### Push to a new branch on the org remote
+
+```bash
+git push org jazzy_dev:jazzy_dev
+```
+
+The branch is created automatically on the org repo if it doesn't exist.
+
+### Verify remotes
+
+```bash
+git remote -v
+```
+
+You'll see two remotes:
+- `origin` — your personal repo
+- `org` — the organization repo
+
+### Usage going forward
+
+```bash
+git push origin jazzy_dev    # push to personal repo
+git push org jazzy_dev       # push to org repo
+```
+
+### Pull from org remote
+
+```bash
+git pull org main            # pull main from org repo
+git pull org jazzy_dev       # pull jazzy_dev from org repo
+```
+
 ## .gitignore
 
 The following are excluded from version control:

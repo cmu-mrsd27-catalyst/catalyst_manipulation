@@ -143,7 +143,7 @@ class AprilTagGraspNode(Node):
         # Service clients
         self._joint_client = self.create_client(JsonCommand, JOINT_SERVICE)
         self._cartesian_client = self.create_client(JsonCommand, CARTESIAN_SERVICE)
-        # self._gripper_client = self.create_client(JsonCommand, GRIPPER_SERVICE)
+        self._gripper_client = self.create_client(JsonCommand, GRIPPER_SERVICE)
 
     def _world_model_cb(self, msg: String):
         self._world_model = json.loads(msg.data)
@@ -152,7 +152,7 @@ class AprilTagGraspNode(Node):
         self.get_logger().info('Waiting for motion planner services...')
         self._joint_client.wait_for_service()
         self._cartesian_client.wait_for_service()
-        # self._gripper_client.wait_for_service()
+        self._gripper_client.wait_for_service()
         self.get_logger().info('All services ready.')
 
     def wait_for_world_model(self, timeout=10.0):
@@ -229,11 +229,12 @@ class AprilTagGraspNode(Node):
     def move_pose(self, pose_name, speed=1.0):
         return self._call(self._joint_client, {'pose': pose_name, 'speed': speed})
 
-    def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=1.0):
+    def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.2, keep_orientation=False):
         return self._call(self._cartesian_client, {
             'x': x, 'y': y, 'z': z,
             'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw,
             'speed': speed,
+            'keep_orientation': keep_orientation
         })
 
     def open_gripper(self):
@@ -242,7 +243,7 @@ class AprilTagGraspNode(Node):
     def close_gripper(self):
         return self._call(self._gripper_client, {'action': 'close'})
 
-    def move_to_pre_grasp(self, H_target, speed=0.1):
+    def move_to_pre_grasp(self, H_target, speed=0.1, keep_orientation=False):
         """Compute grasp pose from visible tags and move there."""
         self.get_logger().info('Computing grasp pose from visible AprilTags...')
         # H_target = self.compute_grasp_pose()
@@ -256,9 +257,9 @@ class AprilTagGraspNode(Node):
             f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
         )
 
-        return self.move_cartesian(x, y, z+0.05, qx, qy, qz, qw, speed)
+        return self.move_cartesian(x, y, z+0.05, qx, qy, qz, qw, speed, keep_orientation)
 
-    def move_to_grasp(self, H_target, speed=0.1):
+    def move_to_grasp(self, H_target, speed=0.1, keep_orientation=False):
         """Compute grasp pose from visible tags and move there."""
         self.get_logger().info('Computing grasp pose from visible AprilTags...')
         # H_target = self.compute_grasp_pose()
@@ -271,9 +272,8 @@ class AprilTagGraspNode(Node):
             f'pos=({x:.4f}, {y:.4f}, {z:.4f}) '
             f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
         )
-        self.move_cartesian(x, y, z+0.05, qx, qy, qz, qw, speed)
 
-        return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed)
+        return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed, keep_orientation)
 
     def _get_current_tcp_pose(self):
         """Read current TCP pose from world model. Returns [x,y,z,qx,qy,qz,qw] or None."""
@@ -333,51 +333,57 @@ def main():
         return
 
     node.get_logger().info('=== Starting AprilTag grasp sequence ===')
+    node.open_gripper()
+    time.sleep(1)
+    node.close_gripper()
+    time.sleep(1)
+    node.open_gripper()
 
-    for i in range(15):
+    # node.open_gripper()
+    # for i in range(15):
 
-        # 1. Home and open gripper
-        node.move_pose('home', speed=0.2)
-        time.sleep(0.5)
-        # node.open_gripper()
-        time.sleep(1)
+    #     # 1. Home and open gripper
+    #     node.move_pose('home', speed=0.2)
+    #     time.sleep(0.5)
+    #     # node.open_gripper()
+    #     time.sleep(1)
 
-        H_target, H_to, H_tb = node.compute_grasp_pose()
-        time.sleep(1)
+    #     H_target, H_to, H_tb = node.compute_grasp_pose()
+    #     time.sleep(1)
 
-        # 2. Move to grasp pose computed from visible tag(s)
-        node.get_logger().info('--- Moving to AprilTag grasp pose ---')
-        if node.move_to_pre_grasp(H_target, speed=0.1):
-            # time.sleep(0.5)
-            # node.close_gripper()
-            time.sleep(0.5)
-        else:
-            node.get_logger().warn('Failed to reach pre-grasp pose')
+    #     # 2. Move to grasp pose computed from visible tag(s)
+    #     node.get_logger().info('--- Moving to AprilTag grasp pose ---')
+    #     if node.move_to_pre_grasp(H_target, speed=0.1, keep_orientation = True):
+    #         # time.sleep(0.5)
+    #         # node.close_gripper()
+    #         time.sleep(0.5)
+    #     else:
+    #         node.get_logger().warn('Failed to reach pre-grasp pose')
 
-        if node.move_to_grasp(H_target, speed=0.01):
-            # time.sleep(0.5)
-            # node.close_gripper()
-            time.sleep(0.5)
-        else:
-            node.get_logger().warn('Failed to reach grasp pose')
+    #     if node.move_to_grasp(H_target, speed=0.01, keep_orientation = True):
+    #         # time.sleep(0.5)
+    #         # node.close_gripper()
+    #         time.sleep(0.5)
+    #     else:
+    #         node.get_logger().warn('Failed to reach grasp pose')
 
-        # Log grasp data after reaching grasp pose
-        time.sleep(0.5)  # let arm settle
-        actual_tcp = node._get_current_tcp_pose()
-        node._log_grasp_data(H_to, H_tb, H_target, actual_tcp)
+    #     # Log grasp data after reaching grasp pose
+    #     time.sleep(0.5)  # let arm settle
+    #     actual_tcp = node._get_current_tcp_pose()
+    #     node._log_grasp_data(H_to, H_tb, H_target, actual_tcp)
 
-        if node.move_to_pre_grasp(H_target, speed=0.1):
-            # time.sleep(0.5)
-            # node.close_gripper()
-            time.sleep(0.5)
-        else:
-            node.get_logger().warn('Failed to reach pre-grasp pose')
+    #     if node.move_to_pre_grasp(H_target, speed=0.1, keep_orientation = True):
+    #         # time.sleep(0.5)
+    #         # node.close_gripper()
+    #         time.sleep(0.5)
+    #     else:
+    #         node.get_logger().warn('Failed to reach pre-grasp pose')
 
-        # 3. Return home
-        node.move_pose('home', speed=0.2)
-        time.sleep(0.5)
+    #     # 3. Return home
+    #     node.move_pose('home', speed=0.2)
+    #     time.sleep(0.5)
 
-        node.get_logger().info('=== AprilTag grasp sequence {i} complete ===')
+    node.get_logger().info('=== AprilTag grasp sequence {i} complete ===')
 
     node.destroy_node()
     rclpy.shutdown()

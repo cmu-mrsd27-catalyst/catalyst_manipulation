@@ -24,6 +24,7 @@ const std::string PLANNING_GROUP_ARM = "xarm6";
 const std::string PLANNING_GROUP_GRIPPER = "bio_gripper";
 const std::string BASE_FRAME = "link_base";
 const std::string EE_LINK = "link_tcp";
+const std::string CONSTRAINT_LINK = "link_eef";  // last link in xarm6 group — use for path constraints
 const std::vector<std::string> JOINT_NAMES = {
     "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"
 };
@@ -170,16 +171,17 @@ int main(int argc, char** argv)
 
                         for (int i = 0; i < max_attempts; i++) {
                             double tol = base_tol + (i * tol_step);
-                            RCLCPP_INFO(logger, "Straight-line + orientation constraint attempt %d/%d, tolerance: %.3f rad",
+                            RCLCPP_INFO(logger, "Straight-line + orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                         i + 1, max_attempts, tol);
 
+                            // Lock X/Y rotation, allow free rotation about Z
                             moveit_msgs::msg::OrientationConstraint oc;
                             oc.header.frame_id = BASE_FRAME;
-                            oc.link_name = EE_LINK;
+                            oc.link_name = CONSTRAINT_LINK;
                             oc.orientation = current_pose.orientation;
                             oc.absolute_x_axis_tolerance = tol;
                             oc.absolute_y_axis_tolerance = tol;
-                            oc.absolute_z_axis_tolerance = tol;
+                            oc.absolute_z_axis_tolerance = M_PI;
                             oc.weight = 1.0;
 
                             moveit_msgs::msg::Constraints path_constraints;
@@ -233,54 +235,55 @@ int main(int argc, char** argv)
                 std::vector<double> current_joints;
                 current_state->copyJointGroupPositions(jmg, current_joints);
 
-                // 2. Try IK multiple times with different seeds, keep closest solution
-                const int IK_ATTEMPTS = 50;
+                // 2. Solve IK once — TRAC-IK handles seed-based convergence
+                //    internally, so the multi-seed loop used with KDL is not needed.
                 std::vector<double> best_solution;
-                double best_distance = std::numeric_limits<double>::max();
-                int solutions_found = 0;
+                current_state->setJointGroupPositions(jmg, current_joints);
 
-                for (int i = 0; i < IK_ATTEMPTS; i++) {
-                    // First attempt: seed with current joints. Rest: add random noise.
-                    std::vector<double> seed = current_joints;
-                    if (i > 0) {
-                        for (auto& s : seed) {
-                            s += ((double)rand() / RAND_MAX - 0.5) * 1.0;
-                        }
-                    }
-                    current_state->setJointGroupPositions(jmg, seed);
-
-                    if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
-                        std::vector<double> solution;
-                        current_state->copyJointGroupPositions(jmg, solution);
-
-                        // Calculate joint-space distance from current
-                        double dist = 0.0;
-                        for (size_t j = 0; j < solution.size(); j++) {
-                            double d = solution[j] - current_joints[j];
-                            dist += d * d;
-                        }
-                        dist = std::sqrt(dist);
-                        solutions_found++;
-
-                        if (dist < best_distance) {
-                            best_distance = dist;
-                            best_solution = solution;
-                        }
-                    }
-                }
-
-                if (best_solution.empty()) {
-                    RCLCPP_ERROR(logger, "IK failed: no solution found in %d attempts", IK_ATTEMPTS);
+                if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
+                    current_state->copyJointGroupPositions(jmg, best_solution);
+                } else {
+                    RCLCPP_ERROR(logger, "IK failed: no solution found");
                     response->response = json({{"success", false},
                         {"message", "No IK solution found for target pose"}}).dump();
                     return;
                 }
 
-                RCLCPP_INFO(logger, "IK: found %d solutions, best distance: %.4f rad", solutions_found, best_distance);
-                RCLCPP_INFO(logger, "Best IK solution: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f] deg",
+                RCLCPP_INFO(logger, "IK solution: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f] deg",
                             best_solution[0] * 180.0 / M_PI, best_solution[1] * 180.0 / M_PI,
                             best_solution[2] * 180.0 / M_PI, best_solution[3] * 180.0 / M_PI,
                             best_solution[4] * 180.0 / M_PI, best_solution[5] * 180.0 / M_PI);
+
+                // --- Old KDL multi-seed loop (commented out — not needed with TRAC-IK) ---
+                // const int IK_ATTEMPTS = 50;
+                // double best_distance = std::numeric_limits<double>::max();
+                // int solutions_found = 0;
+                //
+                // for (int i = 0; i < IK_ATTEMPTS; i++) {
+                //     std::vector<double> seed = current_joints;
+                //     if (i > 0) {
+                //         for (auto& s : seed) {
+                //             s += ((double)rand() / RAND_MAX - 0.5) * 1.0;
+                //         }
+                //     }
+                //     current_state->setJointGroupPositions(jmg, seed);
+                //
+                //     if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
+                //         std::vector<double> solution;
+                //         current_state->copyJointGroupPositions(jmg, solution);
+                //         double dist = 0.0;
+                //         for (size_t j = 0; j < solution.size(); j++) {
+                //             double d = solution[j] - current_joints[j];
+                //             dist += d * d;
+                //         }
+                //         dist = std::sqrt(dist);
+                //         solutions_found++;
+                //         if (dist < best_distance) {
+                //             best_distance = dist;
+                //             best_solution = solution;
+                //         }
+                //     }
+                // }
 
                 // 3. Set orientation path constraint if requested
                 if (keep_orientation) {
@@ -292,16 +295,17 @@ int main(int argc, char** argv)
 
                     for (int i = 0; i < max_attempts; i++) {
                         double tol = base_tol + (i * tol_step);
-                        RCLCPP_INFO(logger, "Orientation constraint attempt %d/%d, tolerance: %.3f rad",
+                        RCLCPP_INFO(logger, "Orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                     i + 1, max_attempts, tol);
 
+                        // Lock X/Y rotation, allow free rotation about Z
                         moveit_msgs::msg::OrientationConstraint oc;
                         oc.header.frame_id = BASE_FRAME;
-                        oc.link_name = EE_LINK;
+                        oc.link_name = CONSTRAINT_LINK;
                         oc.orientation = current_pose.orientation;
                         oc.absolute_x_axis_tolerance = tol;
                         oc.absolute_y_axis_tolerance = tol;
-                        oc.absolute_z_axis_tolerance = tol;
+                        oc.absolute_z_axis_tolerance = M_PI;
                         oc.weight = 1.0;
 
                         moveit_msgs::msg::Constraints path_constraints;
@@ -332,9 +336,7 @@ int main(int argc, char** argv)
                     if (success) {
                         arm.execute(plan);
                         response->response = json({{"success", true},
-                            {"message", "Cartesian motion succeeded (IK solutions: " +
-                                        std::to_string(solutions_found) + ", distance: " +
-                                        std::to_string(best_distance).substr(0, 5) + " rad)"}}).dump();
+                            {"message", "Cartesian motion succeeded"}}).dump();
                     } else {
                         response->response = json({{"success", false},
                             {"message", "Planning failed (IK succeeded but path planning failed)"}}).dump();

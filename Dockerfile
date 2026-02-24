@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-moveit-visual-tools \
     ros-jazzy-moveit-servo \
     ros-jazzy-moveit-resources \
+    ros-jazzy-trac-ik-kinematics-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Gazebo Harmonic + ROS 2 bridge + ros2_control plugin
