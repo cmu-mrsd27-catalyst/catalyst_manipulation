@@ -27,7 +27,14 @@ ament_target_dependencies(
   catalyst_interfaces
   sensor_msgs
 )
-target_link_libraries(motion_planner nlohmann_json::nlohmann_json)
+# xArm SDK (for guide/teach mode)
+target_include_directories(motion_planner PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../external/xarm_ros2/xarm_sdk/cxx/include
+)
+target_link_libraries(motion_planner
+  nlohmann_json::nlohmann_json
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../install/xarm_sdk/lib/libxarm_cxx_sdk.so
+)
 
 add_executable(scene_manager src/scene_manager_node.cpp)
 target_compile_features(scene_manager PUBLIC cxx_std_17)

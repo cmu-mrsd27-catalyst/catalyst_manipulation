@@ -402,6 +402,8 @@ def generate_launch_description():
             kinematics_yaml,
             {'use_sim_time': use_sim_time},
             {'enable_gripper_service': not is_real},
+            {'enable_guide_mode': is_real},
+            {'robot_ip': robot_ip},
         ],
     )
 

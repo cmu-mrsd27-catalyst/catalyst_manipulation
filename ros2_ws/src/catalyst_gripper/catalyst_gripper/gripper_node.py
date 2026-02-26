@@ -183,7 +183,8 @@ class GripperNode(Node):
                 data = self._gripper.get_data()
                 grasping = self._gripper.is_grasping()
             meters = self._ticks_to_meters(data['position'])
-        except RuntimeError:
+        except RuntimeError as e:
+            self.get_logger().warn(f'Gripper read failed: {e}', throttle_duration_sec=5.0)
             return  # skip this cycle if read fails
 
         msg = JointState()

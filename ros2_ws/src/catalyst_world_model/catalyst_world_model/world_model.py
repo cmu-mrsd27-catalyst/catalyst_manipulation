@@ -39,6 +39,16 @@ ROBOT_STATE_NAMES = {
     5: 'CONFIG_CHANGED',
 }
 
+# xArm robot mode mapping
+ROBOT_MODE_NAMES = {
+    0: 'POSITION',
+    1: 'SERVO',
+    2: 'TEACH_JOINT',
+    3: 'TEACH_CART',
+    4: 'VELO_JOINT',
+    5: 'VELO_CART',
+}
+
 # Gripper fallback timeout (seconds) — if no /gripper_state received within
 # this window, fall back to joint_states finger position.
 GRIPPER_TOPIC_TIMEOUT = 2.0
@@ -123,6 +133,8 @@ class WorldModel(Node):
             'state': msg.state,
             'state_name': ROBOT_STATE_NAMES.get(msg.state, 'UNKNOWN'),
             'mode': msg.mode,
+            'mode_name': ROBOT_MODE_NAMES.get(msg.mode, 'UNKNOWN'),
+            'is_teach_mode': msg.mode in (2, 3),
             'error': msg.err,
             'warning': msg.warn,
             'source': 'xarm_driver',

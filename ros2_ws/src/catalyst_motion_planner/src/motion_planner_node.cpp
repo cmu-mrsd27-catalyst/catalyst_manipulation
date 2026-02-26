@@ -8,7 +8,9 @@
 
 #include <moveit/robot_state/robot_state.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <xarm/wrapper/xarm_api.h>
 #include <thread>
+#include <chrono>
 #include <cmath>
 #include <algorithm>
 #include <string>
@@ -404,14 +406,221 @@ int main(int argc, char** argv)
         RCLCPP_INFO(logger, "Gripper service DISABLED (enable_gripper_service=false)");
     }
 
+    // ===================== Guide Mode Service =====================
+    bool enable_guide_mode = service_node->get_parameter_or("enable_guide_mode", rclcpp::Parameter("enable_guide_mode", false)).as_bool();
+    std::string robot_ip = service_node->get_parameter_or("robot_ip", rclcpp::Parameter("robot_ip", "192.168.1.212")).as_string();
+
+    XArmAPI* xarm_ptr = nullptr;
+    std::atomic<bool> is_teach_mode{false};
+    rclcpp::Service<JsonCommand>::SharedPtr guide_mode_service;
+
+    if (enable_guide_mode) {
+        xarm_ptr = new XArmAPI(robot_ip);
+        if (xarm_ptr->error_code != 0) {
+            RCLCPP_ERROR(logger, "Failed to connect xArm SDK to %s (error=%d)", robot_ip.c_str(), xarm_ptr->error_code);
+            delete xarm_ptr;
+            xarm_ptr = nullptr;
+        } else {
+            RCLCPP_INFO(logger, "xArm SDK connected to %s for guide mode", robot_ip.c_str());
+        }
+    }
+
+    // Max time to wait for arm mode/state confirmation
+    const int GUIDE_MODE_CONFIRM_TIMEOUT_MS = 5000;
+    const int GUIDE_MODE_POLL_INTERVAL_MS = 100;
+
+    if (enable_guide_mode && xarm_ptr) {
+        guide_mode_service = service_node->create_service<JsonCommand>(
+            "/guide_mode",
+            [&xarm_ptr, &is_teach_mode, &logger,
+             GUIDE_MODE_CONFIRM_TIMEOUT_MS, GUIDE_MODE_POLL_INTERVAL_MS](
+                const JsonCommand::Request::SharedPtr request,
+                JsonCommand::Response::SharedPtr response)
+            {
+                // Helper: poll until arm reaches expected mode+state, or timeout
+                auto wait_for_mode_state = [&](int expected_mode, int expected_state,
+                                               int timeout_ms, int poll_ms) -> bool {
+                    int elapsed = 0;
+                    while (elapsed < timeout_ms) {
+                        if (xarm_ptr->mode == expected_mode && xarm_ptr->state == expected_state) {
+                            return true;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
+                        elapsed += poll_ms;
+                    }
+                    return (xarm_ptr->mode == expected_mode && xarm_ptr->state == expected_state);
+                };
+
+                try {
+                    auto cmd = json::parse(request->command);
+                    std::string action = cmd.at("action").get<std::string>();
+
+                    if (action == "enable") {
+                        // Set teach sensitivity (1–5, default 3)
+                        int sensitivity = cmd.value("sensitivity", 3);
+                        sensitivity = std::clamp(sensitivity, 1, 5);
+                        xarm_ptr->set_teach_sensitivity(sensitivity);
+                        RCLCPP_INFO(logger, "Teach sensitivity set to %d", sensitivity);
+
+                        // Step 1: STOP — HW plugin detects state>2, auto-deactivates controllers
+                        int ret = xarm_ptr->set_state(4);  // STOP
+                        if (ret != 0) {
+                            response->response = json({
+                                {"success", false},
+                                {"message", "set_state(STOP) failed, ret=" + std::to_string(ret)},
+                                {"mode", xarm_ptr->mode},
+                                {"state", xarm_ptr->state}
+                            }).dump();
+                            return;
+                        }
+
+                        // Step 2: Wait for HW plugin to finish deactivation and stop writing
+                        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+                        // Step 3: Set teach mode — HW plugin's write() loop now returns
+                        // early at _need_reset() and won't send conflicting servo commands.
+                        // Do NOT call clean_error/clean_warn/motion_enable here — they
+                        // reset arm mode to 0 (POSITION).
+                        xarm_ptr->set_mode(2);   // TEACH
+                        xarm_ptr->set_state(0);  // START
+
+                        // Step 4: Block until arm confirms mode=2, or retry with reset
+                        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                        bool confirmed = (xarm_ptr->mode == 2 && xarm_ptr->state == 0);
+
+                        if (!confirmed) {
+                            // Retry: the HW plugin may have reset mode to 0. Clear errors
+                            // and re-enable motion before retrying (matches guide_mode.py).
+                            RCLCPP_WARN(logger, "Teach mode did not take effect (mode=%d, state=%d), "
+                                        "retrying with clean_error...", xarm_ptr->mode, xarm_ptr->state);
+                            xarm_ptr->clean_error();
+                            xarm_ptr->clean_warn();
+                            xarm_ptr->motion_enable(true);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                            xarm_ptr->set_mode(2);   // TEACH
+                            xarm_ptr->set_state(0);  // START
+
+                            // Poll until confirmed or timeout
+                            confirmed = wait_for_mode_state(2, 0,
+                                GUIDE_MODE_CONFIRM_TIMEOUT_MS, GUIDE_MODE_POLL_INTERVAL_MS);
+                        }
+
+                        if (!confirmed) {
+                            RCLCPP_ERROR(logger, "Guide mode enable FAILED after retry (mode=%d, state=%d)",
+                                         xarm_ptr->mode, xarm_ptr->state);
+                            response->response = json({
+                                {"success", false},
+                                {"message", "Timeout waiting for teach mode confirmation after retry"},
+                                {"mode", xarm_ptr->mode},
+                                {"state", xarm_ptr->state}
+                            }).dump();
+                            return;
+                        }
+
+                        is_teach_mode.store(true);
+                        RCLCPP_INFO(logger, "Guide mode ENABLED (teach mode confirmed: mode=%d, state=%d)",
+                                    xarm_ptr->mode, xarm_ptr->state);
+                        response->response = json({
+                            {"success", true},
+                            {"message", "Guide mode enabled"},
+                            {"mode", xarm_ptr->mode},
+                            {"state", xarm_ptr->state}
+                        }).dump();
+
+                    } else if (action == "disable") {
+                        // Full reset sequence (matches guide_mode.py disable_teach_mode):
+                        // clean_error + clean_warn + motion_enable + set_mode(SERVO) + set_state(START)
+                        xarm_ptr->clean_error();
+                        xarm_ptr->clean_warn();
+                        xarm_ptr->motion_enable(true);
+                        xarm_ptr->set_mode(1);   // SERVO
+                        xarm_ptr->set_state(0);  // START
+
+                        // Wait for HW plugin to detect arm is ready and auto-reactivate
+                        // all controllers (joint_state_broadcaster + xarm6_traj_controller).
+                        RCLCPP_INFO(logger, "Servo mode set, waiting for HW plugin to reactivate controllers...");
+                        std::this_thread::sleep_for(std::chrono::seconds(3));
+
+                        // Verify mode/state
+                        bool confirmed = wait_for_mode_state(1, 0,
+                            GUIDE_MODE_CONFIRM_TIMEOUT_MS, GUIDE_MODE_POLL_INTERVAL_MS);
+
+                        if (!confirmed) {
+                            RCLCPP_WARN(logger, "Guide mode disable: arm did not confirm mode=1/state=0 "
+                                        "within timeout (got mode=%d, state=%d)", xarm_ptr->mode, xarm_ptr->state);
+                            response->response = json({
+                                {"success", false},
+                                {"message", "Timeout waiting for servo mode confirmation"},
+                                {"mode", xarm_ptr->mode},
+                                {"state", xarm_ptr->state}
+                            }).dump();
+                            return;
+                        }
+
+                        is_teach_mode.store(false);
+                        RCLCPP_INFO(logger, "Guide mode DISABLED (servo mode confirmed: mode=%d, state=%d)",
+                                    xarm_ptr->mode, xarm_ptr->state);
+                        response->response = json({
+                            {"success", true},
+                            {"message", "Guide mode disabled"},
+                            {"mode", xarm_ptr->mode},
+                            {"state", xarm_ptr->state}
+                        }).dump();
+
+                    } else if (action == "status") {
+                        response->response = json({
+                            {"success", true},
+                            {"message", "Current arm status"},
+                            {"mode", xarm_ptr->mode},
+                            {"state", xarm_ptr->state}
+                        }).dump();
+
+                    } else {
+                        response->response = json({
+                            {"success", false},
+                            {"message", "Unknown action '" + action + "'. Use 'enable', 'disable', or 'status'."}
+                        }).dump();
+                    }
+
+                } catch (const std::exception& e) {
+                    response->response = json({{"success", false},
+                        {"message", std::string("Error: ") + e.what()}}).dump();
+                }
+            }
+        );
+    } else if (enable_guide_mode) {
+        RCLCPP_WARN(logger, "Guide mode requested but xArm SDK connection failed — service not created");
+    } else {
+        RCLCPP_INFO(logger, "Guide mode service DISABLED (enable_guide_mode=false)");
+    }
+
     RCLCPP_INFO(logger, "Services ready:");
     RCLCPP_INFO(logger, "  /joint_command     - Joint-space arm control");
     RCLCPP_INFO(logger, "  /cartesian_command - Cartesian arm control");
     if (enable_gripper) {
         RCLCPP_INFO(logger, "  /gripper_command   - Gripper open/close");
     }
+    if (enable_guide_mode && xarm_ptr) {
+        RCLCPP_INFO(logger, "  /guide_mode        - Toggle teach/guide mode");
+    }
 
     spin_thread.join();
+
+    // Auto-disable teach mode on shutdown
+    if (xarm_ptr && is_teach_mode.load()) {
+        RCLCPP_INFO(logger, "Shutting down: auto-disabling teach mode...");
+        xarm_ptr->clean_error();
+        xarm_ptr->clean_warn();
+        xarm_ptr->motion_enable(true);
+        xarm_ptr->set_mode(1);
+        xarm_ptr->set_state(0);
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+    if (xarm_ptr) {
+        xarm_ptr->disconnect();
+        delete xarm_ptr;
+    }
+
     rclcpp::shutdown();
     return 0;
 }

@@ -25,6 +25,7 @@ from catalyst_interfaces.srv import JsonCommand
 JOINT_SERVICE = '/joint_command'
 CARTESIAN_SERVICE = '/cartesian_command'
 GRIPPER_SERVICE = '/gripper_command'
+GUIDE_MODE_SERVICE = '/guide_mode'
 
 
 def quat_to_rotation_matrix(qx, qy, qz, qw):
@@ -144,6 +145,7 @@ class AprilTagGraspNode(Node):
         self._joint_client = self.create_client(JsonCommand, JOINT_SERVICE)
         self._cartesian_client = self.create_client(JsonCommand, CARTESIAN_SERVICE)
         self._gripper_client = self.create_client(JsonCommand, GRIPPER_SERVICE)
+        self._guide_mode_client = self.create_client(JsonCommand, GUIDE_MODE_SERVICE)
 
     def _world_model_cb(self, msg: String):
         self._world_model = json.loads(msg.data)
@@ -153,6 +155,7 @@ class AprilTagGraspNode(Node):
         self._joint_client.wait_for_service()
         self._cartesian_client.wait_for_service()
         self._gripper_client.wait_for_service()
+        self._guide_mode_client.wait_for_service()
         self.get_logger().info('All services ready.')
 
     def wait_for_world_model(self, timeout=10.0):
@@ -229,12 +232,13 @@ class AprilTagGraspNode(Node):
     def move_pose(self, pose_name, speed=1.0):
         return self._call(self._joint_client, {'pose': pose_name, 'speed': speed})
 
-    def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.2, keep_orientation=False):
+    def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.2, keep_orientation=False, straight_line = False):
         return self._call(self._cartesian_client, {
             'x': x, 'y': y, 'z': z,
             'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw,
             'speed': speed,
-            'keep_orientation': keep_orientation
+            'keep_orientation': keep_orientation,
+            'straight_line': straight_line
         })
 
     def open_gripper(self):
@@ -243,7 +247,7 @@ class AprilTagGraspNode(Node):
     def close_gripper(self):
         return self._call(self._gripper_client, {'action': 'close'})
 
-    def move_to_pre_grasp(self, H_target, speed=0.1, keep_orientation=False):
+    def move_to_pre_grasp(self, H_target, speed=0.1, keep_orientation=False, straight_line=False):
         """Compute grasp pose from visible tags and move there."""
         self.get_logger().info('Computing grasp pose from visible AprilTags...')
         # H_target = self.compute_grasp_pose()
@@ -257,9 +261,9 @@ class AprilTagGraspNode(Node):
             f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
         )
 
-        return self.move_cartesian(x, y, z+0.05, qx, qy, qz, qw, speed, keep_orientation)
+        return self.move_cartesian(x, y, z+0.05, qx, qy, qz, qw, speed, keep_orientation, straight_line)
 
-    def move_to_grasp(self, H_target, speed=0.1, keep_orientation=False):
+    def move_to_grasp(self, H_target, speed=0.1, keep_orientation=False, straight_line=False):
         """Compute grasp pose from visible tags and move there."""
         self.get_logger().info('Computing grasp pose from visible AprilTags...')
         # H_target = self.compute_grasp_pose()
@@ -273,7 +277,7 @@ class AprilTagGraspNode(Node):
             f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
         )
 
-        return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed, keep_orientation)
+        return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed, keep_orientation, straight_line)
 
     def _get_current_tcp_pose(self):
         """Read current TCP pose from world model. Returns [x,y,z,qx,qy,qz,qw] or None."""
@@ -286,6 +290,10 @@ class AprilTagGraspNode(Node):
         p = tcp['position']
         o = tcp['orientation']
         return [p['x'], p['y'], p['z'], o['qx'], o['qy'], o['qz'], o['qw']]
+    
+    def activate_guide_mode(self, mode):
+
+        return self._call(self._guide_mode_client, {'action': mode, 'sensitivity': 5})
 
     def _log_grasp_data(self, H_to, H_tb, H_grasp, actual_tcp_pose):
         """Append one JSON record to grasp_log.jsonl."""
@@ -333,55 +341,69 @@ def main():
         return
 
     node.get_logger().info('=== Starting AprilTag grasp sequence ===')
-    node.open_gripper()
-    time.sleep(1)
-    node.close_gripper()
-    time.sleep(1)
-    node.open_gripper()
-
     # node.open_gripper()
-    # for i in range(15):
+    time.sleep(1)
+    # node.close_gripper()
+    # time.sleep(1)
+    # node.open_gripper()
 
-    #     # 1. Home and open gripper
-    #     node.move_pose('home', speed=0.2)
-    #     time.sleep(0.5)
-    #     # node.open_gripper()
-    #     time.sleep(1)
+    # # node.open_gripper()
+    for i in range(1):
 
-    #     H_target, H_to, H_tb = node.compute_grasp_pose()
-    #     time.sleep(1)
+        # 1. Home and open gripper
+        node.move_pose('home', speed=0.2)
+        time.sleep(0.5)
+        # node.open_gripper()
+        time.sleep(1)
 
-    #     # 2. Move to grasp pose computed from visible tag(s)
-    #     node.get_logger().info('--- Moving to AprilTag grasp pose ---')
-    #     if node.move_to_pre_grasp(H_target, speed=0.1, keep_orientation = True):
-    #         # time.sleep(0.5)
-    #         # node.close_gripper()
-    #         time.sleep(0.5)
-    #     else:
-    #         node.get_logger().warn('Failed to reach pre-grasp pose')
+        H_target, H_to, H_tb = node.compute_grasp_pose()
+        time.sleep(1)
 
-    #     if node.move_to_grasp(H_target, speed=0.01, keep_orientation = True):
-    #         # time.sleep(0.5)
-    #         # node.close_gripper()
-    #         time.sleep(0.5)
-    #     else:
-    #         node.get_logger().warn('Failed to reach grasp pose')
+        # 2. Move to grasp pose computed from visible tag(s)
+        node.get_logger().info('--- Moving to AprilTag grasp pose ---')
+        if node.move_to_pre_grasp(H_target, speed=0.1, keep_orientation = True):
+            # time.sleep(0.5)
+            # node.close_gripper()
+            time.sleep(0.5)
+        else:
+            node.get_logger().warn('Failed to reach pre-grasp pose')
 
-    #     # Log grasp data after reaching grasp pose
-    #     time.sleep(0.5)  # let arm settle
-    #     actual_tcp = node._get_current_tcp_pose()
-    #     node._log_grasp_data(H_to, H_tb, H_target, actual_tcp)
+        if node.move_to_grasp(H_target, speed=0.01, keep_orientation = True):
+            # time.sleep(0.5)
+            # node.close_gripper()
+            time.sleep(0.5)
+        else:
+            node.get_logger().warn('Failed to reach grasp pose')
 
-    #     if node.move_to_pre_grasp(H_target, speed=0.1, keep_orientation = True):
-    #         # time.sleep(0.5)
-    #         # node.close_gripper()
-    #         time.sleep(0.5)
-    #     else:
-    #         node.get_logger().warn('Failed to reach pre-grasp pose')
+        # node.activate_guide_mode('enable')
 
-    #     # 3. Return home
-    #     node.move_pose('home', speed=0.2)
-    #     time.sleep(0.5)
+        # node.close_gripper()
+        to_move = input("type anything to continue")
+
+        # Log grasp data after reaching grasp pose
+        # time.sleep(1)  # let arm settle
+        # actual_tcp = node._get_current_tcp_pose()
+        # node._log_grasp_data(H_to, H_tb, H_target, actual_tcp)
+
+        # node.activate_guide_mode('disable')
+        time.sleep(0.5)
+
+        # Move 5cm above current TCP pose (arm may have shifted during guide mode)
+        current_tcp = node._get_current_tcp_pose()
+        if current_tcp is not None:
+            cx, cy, cz, cqx, cqy, cqz, cqw = current_tcp
+            if node.move_cartesian(cx, cy, cz + 0.05, cqx, cqy, cqz, cqw, speed=0.01, keep_orientation=True, straight_line=True):
+                time.sleep(0.5)
+            else:
+                node.get_logger().warn('Failed to reach post-grasp retreat pose')
+        else:
+            node.get_logger().warn('Could not read current TCP pose for retreat')
+
+        # 3. Return home
+        node.move_pose('home', speed=0.2)
+        time.sleep(1)
+        # node.open_gripper()
+        time.sleep(0.5)
 
     node.get_logger().info('=== AprilTag grasp sequence {i} complete ===')
 

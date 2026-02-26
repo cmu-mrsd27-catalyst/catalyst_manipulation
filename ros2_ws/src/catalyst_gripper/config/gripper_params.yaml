@@ -55,7 +55,7 @@ hold_torque_limit: 1023
 # Wheel speed to maintain against the object while holding, range 0..1023
 # Low value = gentle sustained push. Motor keeps trying to close at this speed
 # but torque_limit caps the actual force applied
-hold_speed: 30
+hold_speed: 200
 
 # ---- Grasp detection (for is_grasping()) ----
 

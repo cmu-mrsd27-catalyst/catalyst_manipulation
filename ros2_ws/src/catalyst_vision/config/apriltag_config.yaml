@@ -22,5 +22,5 @@
     # Size here overrides the global 'size' above if different
     tag:
       ids: [0, 1]
-      frames: [tag_base, tag_object]
+      frames: [tag_object, tag_base]
       sizes: [0.03, 0.03]
