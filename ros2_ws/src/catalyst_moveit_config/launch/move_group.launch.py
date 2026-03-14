@@ -111,6 +111,13 @@ def generate_launch_description():
         'publish_transforms_updates': True,
     }
 
+    # 3D perception / OctoMap configuration
+    sensors_3d_yaml = load_yaml('catalyst_moveit_config', 'config/sensors_3d.yaml')
+    octomap_config = {
+        'octomap_frame': 'link_base',
+        'octomap_resolution': 0.02,
+    }
+
     # move_group node
     move_group_node = Node(
         package='moveit_ros_move_group',
@@ -125,6 +132,8 @@ def generate_launch_description():
             trajectory_execution,
             moveit_controllers,
             planning_scene_monitor,
+            sensors_3d_yaml,
+            octomap_config,
             {'use_sim_time': use_sim_time},
         ],
     )

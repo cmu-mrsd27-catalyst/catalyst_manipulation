@@ -120,6 +120,17 @@ def generate_launch_description():
 
     joint_limits = {'robot_description_planning': joint_limits_yaml}
 
+    # OctoMap / 3D perception config (real hardware only — needs RealSense depth)
+    if is_real:
+        sensors_3d_yaml = load_yaml('catalyst_moveit_config', 'config/sensors_3d.yaml')
+        octomap_config = {
+            'octomap_frame': 'link_base',
+            'octomap_resolution': 0.02,
+        }
+    else:
+        sensors_3d_yaml = {}
+        octomap_config = {}
+
     # Jazzy OMPL format: pipeline config with nested 'ompl' key
     ompl_planning_pipeline_config = {
         'default_planning_pipeline': 'ompl',
@@ -294,6 +305,8 @@ def generate_launch_description():
             trajectory_execution,
             moveit_controllers,
             planning_scene_monitor,
+            sensors_3d_yaml,
+            octomap_config,
             {'use_sim_time': use_sim_time},
         ],
     )

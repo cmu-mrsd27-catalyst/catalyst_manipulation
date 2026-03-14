@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
     libyaml-cpp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install MoveIt 2
+# Install MoveIt 2 (including perception/OctoMap for 3D obstacle avoidance)
 RUN apt-get update && apt-get install -y \
     ros-jazzy-moveit \
     ros-jazzy-moveit-setup-assistant \
@@ -27,6 +27,8 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-moveit-resources \
     ros-jazzy-trac-ik-kinematics-plugin \
     ros-jazzy-force-torque-sensor-broadcaster \
+    ros-jazzy-octomap \
+    ros-jazzy-octomap-msgs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Gazebo Harmonic + ROS 2 bridge + ros2_control plugin
@@ -44,6 +46,7 @@ COPY ./ros2_ws/src /root/ros2_ws/src
 
 # Initialize rosdep (only needed once in the image life)
 # Then install dependencies defined in your package.xml files
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 RUN rosdep update && \
     apt-get update && \
     rosdep install --from-paths src --ignore-src -y -r && \

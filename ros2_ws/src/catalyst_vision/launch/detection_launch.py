@@ -13,7 +13,7 @@ def generate_launch_description():
         'apriltag_config.yaml'
     )
 
-    # RealSense camera launch
+    # RealSense camera launch (color + depth pointcloud for OctoMap)
     realsense_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -21,7 +21,11 @@ def generate_launch_description():
                 'launch',
                 'rs_launch.py'
             )
-        )
+        ),
+        launch_arguments={
+            'pointcloud.enable': 'true',
+            'align_depth.enable': 'true',
+        }.items(),
     )
 
     # Static transform from link_eef to camera_color_optical_frame
