@@ -33,6 +33,7 @@ const std::vector<std::string> JOINT_NAMES = {
 
 int main(int argc, char** argv)
 {
+    
     rclcpp::init(argc, argv);
     rclcpp::NodeOptions node_options;
     node_options.automatically_declare_parameters_from_overrides(true);
@@ -43,6 +44,26 @@ int main(int argc, char** argv)
     auto service_node = rclcpp::Node::make_shared("motion_planner", node_options);
     auto moveit_node = rclcpp::Node::make_shared("motion_planner_moveit", node_options);
     auto logger = service_node->get_logger();
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
+    RCLCPP_INFO(logger, "###################################################################");
 
     // 2. SETUP THE EXECUTOR WITH BOTH NODES
     rclcpp::executors::MultiThreadedExecutor executor;
@@ -62,6 +83,36 @@ int main(int argc, char** argv)
     // arm.setNumPlanningAttempts(10);
 
     RCLCPP_INFO(logger, "MoveGroupInterface ready for '%s'", PLANNING_GROUP_ARM.c_str());
+
+    // Compute the "flat" EEF orientation at home (all joints zero) for keep_orientation constraint.
+    // This orientation has the gripper pointing straight down — flat w.r.t. the table.
+    // keep_orientation will constrain X/Y tilt to stay near this, while allowing free Z rotation.
+    geometry_msgs::msg::Quaternion flat_orientation;
+    {
+        auto state = arm.getCurrentState(5.0);
+        if (state) {
+            const auto* jmg = state->getJointModelGroup(PLANNING_GROUP_ARM);
+            if (state->setToDefaultValues(jmg, "home")) {
+                state->update();
+                auto tf = state->getGlobalLinkTransform(CONSTRAINT_LINK);
+                Eigen::Quaterniond q(tf.rotation());
+                flat_orientation.x = q.x();
+                flat_orientation.y = q.y();
+                flat_orientation.z = q.z();
+                flat_orientation.w = q.w();
+                RCLCPP_INFO(logger, "Flat (home) orientation for %s: quat=(%.4f, %.4f, %.4f, %.4f)",
+                            CONSTRAINT_LINK.c_str(), q.x(), q.y(), q.z(), q.w());
+            } else {
+                RCLCPP_WARN(logger, "Could not resolve home pose — defaulting flat_orientation to identity");
+                flat_orientation.x = 0.0; flat_orientation.y = 0.0;
+                flat_orientation.z = 0.0; flat_orientation.w = 1.0;
+            }
+        } else {
+            RCLCPP_WARN(logger, "Could not get robot state — defaulting flat_orientation to identity");
+            flat_orientation.x = 0.0; flat_orientation.y = 0.0;
+            flat_orientation.z = 0.0; flat_orientation.w = 1.0;
+        }
+    }
 
     // ===================== Joint Service =====================
     auto joint_service = service_node->create_service<JsonCommand>(
@@ -133,7 +184,7 @@ int main(int argc, char** argv)
     // ===================== Cartesian Service =====================
     auto cartesian_service = service_node->create_service<JsonCommand>(
         "/cartesian_command",
-        [&arm, &logger](
+        [&arm, &logger, &flat_orientation](
             const JsonCommand::Request::SharedPtr request,
             JsonCommand::Response::SharedPtr response)
         {
@@ -165,7 +216,6 @@ int main(int argc, char** argv)
                 // Straight-line uses computeCartesianPath (no IK selection needed)
                 if (straight_line) {
                     if (keep_orientation) {
-                        auto current_pose = arm.getCurrentPose().pose;
                         double base_tol = 0.05;
                         double tol_step = 0.05;
                         int max_attempts = 5;
@@ -176,11 +226,11 @@ int main(int argc, char** argv)
                             RCLCPP_INFO(logger, "Straight-line + orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                         i + 1, max_attempts, tol);
 
-                            // Lock X/Y rotation, allow free rotation about Z
+                            // Keep gripper flat (home orientation): lock X/Y tilt, free Z rotation
                             moveit_msgs::msg::OrientationConstraint oc;
                             oc.header.frame_id = BASE_FRAME;
                             oc.link_name = CONSTRAINT_LINK;
-                            oc.orientation = current_pose.orientation;
+                            oc.orientation = flat_orientation;
                             oc.absolute_x_axis_tolerance = tol;
                             oc.absolute_y_axis_tolerance = tol;
                             oc.absolute_z_axis_tolerance = M_PI;
@@ -237,59 +287,56 @@ int main(int argc, char** argv)
                 std::vector<double> current_joints;
                 current_state->copyJointGroupPositions(jmg, current_joints);
 
-                // 2. Solve IK once — TRAC-IK handles seed-based convergence
-                //    internally, so the multi-seed loop used with KDL is not needed.
+                // 2. Solve IK with multiple seeds, pick solution closest to current joints.
+                //    This avoids unnecessary joint 1 flips when multiple IK configs exist.
+                const int IK_ATTEMPTS = 20;
+                double best_distance = std::numeric_limits<double>::max();
                 std::vector<double> best_solution;
-                current_state->setJointGroupPositions(jmg, current_joints);
+                int solutions_found = 0;
 
-                if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
-                    current_state->copyJointGroupPositions(jmg, best_solution);
-                } else {
-                    RCLCPP_ERROR(logger, "IK failed: no solution found");
+                for (int i = 0; i < IK_ATTEMPTS; i++) {
+                    std::vector<double> seed = current_joints;
+                    if (i > 0) {
+                        for (size_t j = 0; j < seed.size(); j++) {
+                            // Larger perturbation on joint 1 to explore different base configs
+                            double range = (j == 0) ? 2.0 : 0.8;
+                            seed[j] += ((double)rand() / RAND_MAX - 0.5) * range;
+                        }
+                    }
+                    current_state->setJointGroupPositions(jmg, seed);
+
+                    if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
+                        std::vector<double> solution;
+                        current_state->copyJointGroupPositions(jmg, solution);
+                        double dist = 0.0;
+                        for (size_t j = 0; j < solution.size(); j++) {
+                            double d = solution[j] - current_joints[j];
+                            dist += d * d;
+                        }
+                        dist = std::sqrt(dist);
+                        solutions_found++;
+                        if (dist < best_distance) {
+                            best_distance = dist;
+                            best_solution = solution;
+                        }
+                    }
+                }
+
+                if (solutions_found == 0) {
+                    RCLCPP_ERROR(logger, "IK failed: no solution found in %d attempts", IK_ATTEMPTS);
                     response->response = json({{"success", false},
                         {"message", "No IK solution found for target pose"}}).dump();
                     return;
                 }
 
+                RCLCPP_INFO(logger, "IK: %d solutions found, best joint dist: %.3f rad", solutions_found, best_distance);
                 RCLCPP_INFO(logger, "IK solution: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f] deg",
                             best_solution[0] * 180.0 / M_PI, best_solution[1] * 180.0 / M_PI,
                             best_solution[2] * 180.0 / M_PI, best_solution[3] * 180.0 / M_PI,
                             best_solution[4] * 180.0 / M_PI, best_solution[5] * 180.0 / M_PI);
 
-                // --- Old KDL multi-seed loop (commented out — not needed with TRAC-IK) ---
-                // const int IK_ATTEMPTS = 50;
-                // double best_distance = std::numeric_limits<double>::max();
-                // int solutions_found = 0;
-                //
-                // for (int i = 0; i < IK_ATTEMPTS; i++) {
-                //     std::vector<double> seed = current_joints;
-                //     if (i > 0) {
-                //         for (auto& s : seed) {
-                //             s += ((double)rand() / RAND_MAX - 0.5) * 1.0;
-                //         }
-                //     }
-                //     current_state->setJointGroupPositions(jmg, seed);
-                //
-                //     if (current_state->setFromIK(jmg, target, "link_tcp", 0.1)) {
-                //         std::vector<double> solution;
-                //         current_state->copyJointGroupPositions(jmg, solution);
-                //         double dist = 0.0;
-                //         for (size_t j = 0; j < solution.size(); j++) {
-                //             double d = solution[j] - current_joints[j];
-                //             dist += d * d;
-                //         }
-                //         dist = std::sqrt(dist);
-                //         solutions_found++;
-                //         if (dist < best_distance) {
-                //             best_distance = dist;
-                //             best_solution = solution;
-                //         }
-                //     }
-                // }
-
                 // 3. Set orientation path constraint if requested
                 if (keep_orientation) {
-                    auto current_pose = arm.getCurrentPose().pose;
                     double base_tol = 0.05;
                     double tol_step = 0.05;
                     int max_attempts = 5;
@@ -300,11 +347,11 @@ int main(int argc, char** argv)
                         RCLCPP_INFO(logger, "Orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                     i + 1, max_attempts, tol);
 
-                        // Lock X/Y rotation, allow free rotation about Z
+                        // Keep gripper flat (home orientation): lock X/Y tilt, free Z rotation
                         moveit_msgs::msg::OrientationConstraint oc;
                         oc.header.frame_id = BASE_FRAME;
                         oc.link_name = CONSTRAINT_LINK;
-                        oc.orientation = current_pose.orientation;
+                        oc.orientation = flat_orientation;
                         oc.absolute_x_axis_tolerance = tol;
                         oc.absolute_y_axis_tolerance = tol;
                         oc.absolute_z_axis_tolerance = M_PI;

@@ -58,8 +58,7 @@ APRILTAG_TIMEOUT = 1.0
 
 # Tag ID to semantic frame name mapping
 TAG_FRAME_NAMES = {
-    0: 'tag_base',
-    1: 'tag_object',
+    3: 'tag_object',
 }
 
 

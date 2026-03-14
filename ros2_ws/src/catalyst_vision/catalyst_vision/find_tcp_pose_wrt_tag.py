@@ -25,23 +25,23 @@ from scipy.spatial.transform import Rotation as R
 # H_TCP_TB = np.linalg.inv(H_TB_LB) @ H_TCP_LB
 # H_TCP_TO = np.linalg.inv(H_TO_LB) @ H_TCP_LB
 
-H_WP_TB = np.array([[1, 0, 0, 0.05185],
-           [0, 1, 0, 0.03682],
-           [0, 0, 1, -0.0491],
-           [0, 0, 0, 1]])
+# H_WP_TB = np.array([[1, 0, 0, -0.0498],
+#            [0, 1, 0, 0.03314],
+#            [0, 0, 1, -0.0491],
+#            [0, 0, 0, 1]])
 
-H_WP_TO = np.array([[1, 0, 0, -0.05185],
-           [0, 1, 0, 0.03682],
-           [0, 0, 1, -0.0491],
+H_WP_TO = np.array([[1, 0, 0, 0.0],
+           [0, 1, 0, 0.055],
+           [0, 0, 1, -0.049115],
            [0, 0, 0, 1]])
-H_TCP_WP = np.array([[0, 1, 0, -0.004],
-            [0, 0, -1, -0.00485],
-            [-1, 0, 0, 0.015],
-            [0, 0, 0, 1]])
-H_TCP_TB = H_WP_TB @ H_TCP_WP
+H_TCP_WP = np.array([[0, 0, -1, 0.00],
+                     [1, 0, 0, 0.00],
+                     [0, -1, 0, 0.000],
+                     [0, 0, 0, 1]])
+# H_TCP_TB = H_WP_TB @ H_TCP_WP
 H_TCP_TO = H_WP_TO @ H_TCP_WP
 
-print("\nH_TCP_TB\n", H_TCP_TB)
+# print("\nH_TCP_TB\n", H_TCP_TB)
 print("\nH_TCP_TO\n", H_TCP_TO)
 
 """

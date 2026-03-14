@@ -3,7 +3,7 @@
     # --- Basic Settings ---
     image_transport: raw     # Standard for RealSense
     family: 36h11            # Recommended for accuracy/speed
-    size: 0.029               # Default tag size (3cm)
+    size: 0.04               # Default tag size (3cm)
     max_hamming: 0           # 0 is strictest (prevents false positives)
 
     # --- Detector Settings (Optimized for 3cm Tags) ---
@@ -20,7 +20,12 @@
 
     # --- Tag Definitions ---
     # Size here overrides the global 'size' above if different
+    # tag:
+    #   ids: [2]
+    #   frames: [tag_object]
+    #   sizes: [0.0584]
+
     tag:
-      ids: [0, 1]
-      frames: [tag_object, tag_base]
-      sizes: [0.03, 0.03]
+      ids: [3]
+      frames: [tag_object]
+      sizes: [0.04]

@@ -19,6 +19,9 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
+import tf2_ros
+from rclpy.time import Time
+
 from std_msgs.msg import String
 from catalyst_interfaces.srv import JsonCommand
 
@@ -114,6 +117,60 @@ def average_poses(H1, H2):
     return H
 
 
+def compute_look_at_camera_pose(tag_position, tag_rotation, standoff=0.25, height_offset=0.05):
+    """Compute a desired camera_color_optical_frame pose that looks at the tag head-on.
+
+    Positions the camera horizontally in front of the tags (no tilt), backed off
+    along the horizontal projection of the tag normal. The camera stays level at
+    the same height as the tags (plus height_offset).
+
+    The returned frame follows optical convention: Z forward, X right, Y down.
+
+    Args:
+        tag_position: (3,) array — tag center in link_base frame
+        tag_rotation: (3,3) array — tag rotation in link_base frame
+        standoff: horizontal distance from the tags to place the camera
+        height_offset: extra upward (world-Z) shift for the viewpoint
+
+    Returns:
+        4x4 homogeneous matrix — desired camera_color_optical_frame pose in link_base
+    """
+    tag_z = tag_rotation[:, 2]  # tag normal
+
+    # Project tag normal onto XY plane to get horizontal back-off direction
+    horizontal_dir = tag_z.copy()
+    horizontal_dir[2] = 0.0
+    norm = np.linalg.norm(horizontal_dir)
+    if norm < 1e-6:
+        # Tag normal is purely vertical; fall back to backing off along base-X
+        horizontal_dir = np.array([1.0, 0.0, 0.0])
+    else:
+        horizontal_dir = horizontal_dir / norm
+
+    # Camera position: back off horizontally, stay at tag height + offset
+    cam_pos = tag_position + standoff * horizontal_dir
+    cam_pos[2] = tag_position[2] + height_offset
+
+    # Camera Z axis: points horizontally from camera toward tag center (no tilt)
+    cam_z = tag_position - cam_pos
+    cam_z[2] = 0.0  # force level — no vertical component
+    cam_z = cam_z / np.linalg.norm(cam_z)
+
+    # Camera Y axis: points down (optical convention)
+    cam_y = np.array([0.0, 0.0, -1.0])
+
+    # Camera X axis: completes right-handed frame (points right)
+    cam_x = np.cross(cam_y, cam_z)
+    cam_x = cam_x / np.linalg.norm(cam_x)
+
+    H = np.eye(4)
+    H[:3, 0] = cam_x
+    H[:3, 1] = cam_y
+    H[:3, 2] = cam_z
+    H[:3, 3] = cam_pos
+    return H
+
+
 class AprilTagGraspNode(Node):
     def __init__(self):
         super().__init__('test_apriltag_grasping')
@@ -134,8 +191,12 @@ class AprilTagGraspNode(Node):
             grasp_data = json.load(f)
 
         self._H_TCP_TO = np.array(grasp_data['H_TCP_TO'])  # TCP w.r.t. tag_object
-        self._H_TCP_TB = np.array(grasp_data['H_TCP_TB'])  # TCP w.r.t. tag_base
+        # self._H_TCP_TB = np.array(grasp_data['H_TCP_TB'])  # TCP w.r.t. tag_base
         self.get_logger().info(f'Loaded grasp transforms from {config_path}')
+
+        # TF2 buffer for looking up transforms between frames
+        self._tf_buffer = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
 
         # World model state
         self._world_model = None
@@ -180,41 +241,88 @@ class AprilTagGraspNode(Node):
                 return pose_to_homogeneous(pose['position'], pose['orientation'])
         return None
 
-    def compute_grasp_pose(self):
+    def compute_grasp_pose(self, num_samples=15, sample_interval=0.1):
         """Compute target TCP pose in link_base using visible AprilTags.
 
-        H_TCP_base = H_tag_base @ H_TCP_tag
+        Takes multiple samples, rejects position outliers (beyond 1.5 * IQR),
+        and averages the remaining poses for a stable estimate.
 
-        If both tags visible, averages the two resulting TCP poses.
-        If only one visible, uses that one.
+        Args:
+            num_samples: number of detection readings to collect
+            sample_interval: seconds between readings
 
         Returns:
-            (H_grasp, H_to, H_tb) — grasp pose and raw tag poses (each may be None)
+            (H_grasp, H_to, H_tb) — averaged grasp pose and last raw tag poses
         """
-        H_to = self._get_tag_H('tag_object')
-        H_tb = self._get_tag_H('tag_base')
+        self.get_logger().info(f'Collecting {num_samples} tag samples...')
 
-        H_from_to = None
-        H_from_tb = None
+        samples_to = []  # list of 4x4 grasp poses from tag_object
+        samples_tb = []  # list of 4x4 grasp poses from tag_base
+        last_H_to = None
+        last_H_tb = None
 
-        if H_to is not None:
-            H_from_to = H_to @ self._H_TCP_TO
-            self.get_logger().info('tag_object visible — computed grasp pose from it')
+        for i in range(num_samples):
+            H_to = self._get_tag_H('tag_object')
+            H_tb = self._get_tag_H('tag_base')
 
-        if H_tb is not None:
-            H_from_tb = H_tb @ self._H_TCP_TB
-            self.get_logger().info('tag_base visible — computed grasp pose from it')
+            if H_to is not None:
+                last_H_to = H_to
+                samples_to.append(H_to @ self._H_TCP_TO)
+            if H_tb is not None:
+                last_H_tb = H_tb
+                samples_tb.append(H_tb @ self._H_TCP_TB)
 
-        if H_from_to is not None and H_from_tb is not None:
-            self.get_logger().info('Both tags visible — averaging grasp poses')
-            return average_poses(H_from_to, H_from_tb), H_to, H_tb
-        elif H_from_to is not None:
-            return H_from_to, H_to, H_tb
-        elif H_from_tb is not None:
-            return H_from_tb, H_to, H_tb
-        else:
-            self.get_logger().error('No AprilTags visible — cannot compute grasp pose')
-            return None, H_to, H_tb
+            time.sleep(sample_interval)
+
+        self.get_logger().info(
+            f'Collected {len(samples_to)} tag_object, {len(samples_tb)} tag_base samples'
+        )
+
+        # Merge all grasp pose samples
+        all_samples = samples_to + samples_tb
+        if not all_samples:
+            self.get_logger().error('No AprilTags visible in any sample')
+            return None, last_H_to, last_H_tb
+
+        # Extract positions and filter outliers using IQR on Euclidean distance from median
+        positions = np.array([H[:3, 3] for H in all_samples])
+        median_pos = np.median(positions, axis=0)
+        distances = np.linalg.norm(positions - median_pos, axis=1)
+
+        q1 = np.percentile(distances, 25)
+        q3 = np.percentile(distances, 75)
+        iqr = q3 - q1
+        threshold = q3 + 1.5 * iqr
+
+        inlier_mask = distances <= threshold
+        inliers = [H for H, keep in zip(all_samples, inlier_mask) if keep]
+        n_rejected = len(all_samples) - len(inliers)
+
+        if n_rejected > 0:
+            self.get_logger().info(f'Rejected {n_rejected} outlier(s) out of {len(all_samples)} samples')
+
+        if not inliers:
+            self.get_logger().warn('All samples were outliers — using all samples anyway')
+            inliers = all_samples
+
+        # Average the inlier poses: mean position, iteratively averaged quaternion
+        avg_pos = np.mean([H[:3, 3] for H in inliers], axis=0)
+        avg_q = np.array(rotation_matrix_to_quat(inliers[0][:3, :3]))
+        for H in inliers[1:]:
+            avg_q = average_quaternions(avg_q, rotation_matrix_to_quat(H[:3, :3]))
+
+        H_grasp = np.eye(4)
+        H_grasp[:3, :3] = quat_to_rotation_matrix(avg_q[0], avg_q[1], avg_q[2], avg_q[3])
+        H_grasp[:3, 3] = avg_pos
+
+        x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_grasp)
+        self.get_logger().info(
+            f'Averaged grasp pose ({len(inliers)} inliers): '
+            f'pos=({x:.4f}, {y:.4f}, {z:.4f}) '
+            f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
+        )
+
+        return H_grasp, last_H_to, last_H_tb
 
     def _call(self, client, command):
         req = JsonCommand.Request()
@@ -291,6 +399,75 @@ class AprilTagGraspNode(Node):
         o = tcp['orientation']
         return [p['x'], p['y'], p['z'], o['qx'], o['qy'], o['qz'], o['qw']]
     
+    def _lookup_tf_as_H(self, parent_frame, child_frame):
+        """Look up a TF transform and return as 4x4 homogeneous matrix, or None."""
+        try:
+            tf = self._tf_buffer.lookup_transform(parent_frame, child_frame, Time())
+            t = tf.transform.translation
+            r = tf.transform.rotation
+            H = np.eye(4)
+            H[:3, :3] = quat_to_rotation_matrix(r.x, r.y, r.z, r.w)
+            H[:3, 3] = [t.x, t.y, t.z]
+            return H
+        except (tf2_ros.LookupException,
+                tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException) as e:
+            self.get_logger().warn(f'TF lookup {parent_frame} → {child_frame} failed: {e}')
+            return None
+
+    def move_to_look_at_tags(self, standoff=0.25, height_offset=0.07, speed=0.1):
+        """Move the arm so the camera looks at the AprilTags head-on.
+
+        1. Gets tag poses from world model
+        2. Computes desired camera_color_optical_frame pose (looking at tags)
+        3. Uses TF to get camera_color_optical_frame → link_tcp transform
+        4. Converts to desired link_tcp pose in link_base and moves there
+
+        Returns True on success, False otherwise.
+        """
+        H_to = self._get_tag_H('tag_object')
+        H_tb = self._get_tag_H('tag_base')
+
+        # Gather available tag positions and rotations
+        positions = []
+        rotations = []
+        if H_to is not None:
+            positions.append(H_to[:3, 3])
+            rotations.append(H_to[:3, :3])
+        if H_tb is not None:
+            positions.append(H_tb[:3, 3])
+            rotations.append(H_tb[:3, :3])
+
+        if not positions:
+            self.get_logger().error('No AprilTags visible — cannot compute look-at pose')
+            return False
+
+        tag_position = np.mean(positions, axis=0)
+        tag_rotation = rotations[0]
+
+        # Desired camera_color_optical_frame pose in link_base
+        H_co_base_desired = compute_look_at_camera_pose(
+            tag_position, tag_rotation, standoff, height_offset
+        )
+
+        # Get the fixed transform: camera_color_optical_frame → link_tcp via TF
+        H_tcp_co = self._lookup_tf_as_H('camera_color_optical_frame', 'link_tcp')
+        if H_tcp_co is None:
+            self.get_logger().error('Cannot look up camera_color_optical_frame → link_tcp TF')
+            return False
+
+        # Desired TCP pose in link_base:
+        # H_tcp_base = H_co_base_desired @ H_tcp_co
+        H_tcp_base = H_co_base_desired @ H_tcp_co
+
+        x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_tcp_base)
+        self.get_logger().info(
+            f'Look-at TCP pose: pos=({x:.4f}, {y:.4f}, {z:.4f}) '
+            f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
+        )
+
+        return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed=speed)
+
     def activate_guide_mode(self, mode):
 
         return self._call(self._guide_mode_client, {'action': mode, 'sensitivity': 5})
@@ -354,6 +531,13 @@ def main():
         node.move_pose('home', speed=0.2)
         time.sleep(0.5)
         # node.open_gripper()
+        # node.move_cartesian(0.383682, 2.2e-05, 0.143111, 0.973144, 5e-06, -0.230197, -4e-06, speed=0.2, keep_orientation=False)
+        # time.sleep(1)
+
+        # Move camera to look at tags head-on for better pose estimation
+        node.get_logger().info('--- Moving to look at tags head-on ---')
+        if not node.move_to_look_at_tags():
+            node.get_logger().warn('Failed to move to look-at pose, continuing anyway')
         time.sleep(1)
 
         H_target, H_to, H_tb = node.compute_grasp_pose()
@@ -361,7 +545,7 @@ def main():
 
         # 2. Move to grasp pose computed from visible tag(s)
         node.get_logger().info('--- Moving to AprilTag grasp pose ---')
-        if node.move_to_pre_grasp(H_target, speed=0.1, keep_orientation = True):
+        if node.move_to_pre_grasp(H_target, speed=0.1):
             # time.sleep(0.5)
             # node.close_gripper()
             time.sleep(0.5)
