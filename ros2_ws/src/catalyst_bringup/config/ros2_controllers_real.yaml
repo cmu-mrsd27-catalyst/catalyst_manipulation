@@ -18,6 +18,12 @@ controller_manager:
     xarm6_traj_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
+    force_torque_sensor_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+    admittance_controller:
+      type: admittance_controller/AdmittanceController
+
 
 # Joint State Broadcaster - Publishes arm joint states to /joint_states
 # Note: right_finger_joint is published by the catalyst_gripper node instead
@@ -67,3 +73,129 @@ xarm6_traj_controller:
       joint4: {trajectory: 1.0, goal: 0.01}
       joint5: {trajectory: 1.0, goal: 0.01}
       joint6: {trajectory: 1.0, goal: 0.01}
+
+
+# Force/Torque Sensor Broadcaster — publishes WrenchStamped to /ft_data
+force_torque_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: tcp_fts_sensor
+    state_interface_names:
+      - force.x
+      - force.y
+      - force.z
+      - torque.x
+      - torque.y
+      - torque.z
+    frame_id: link_eef
+    topic_name: ft_data
+
+
+# Admittance Controller — force-compliant end-effector control
+# Uses the OnRobot F/T sensor to make the arm yield to external forces.
+# NOTE: Cannot run simultaneously with xarm6_traj_controller (both command
+# position on the same joints). Switch between them at runtime:
+#   ros2 control switch_controllers --deactivate xarm6_traj_controller --activate admittance_controller
+#   ros2 control switch_controllers --deactivate admittance_controller --activate xarm6_traj_controller
+admittance_controller:
+  ros__parameters:
+    joints:
+      - joint1
+      - joint2
+      - joint3
+      - joint4
+      - joint5
+      - joint6
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+    chainable_command_interfaces:
+      - position
+      - velocity
+
+    # Kinematics — KDL plugin for Jacobian computation
+    kinematics:
+      plugin_name: kinematics_interface_kdl/KinematicsInterfaceKDL
+      plugin_package: kinematics_interface
+      base: link_base
+      tip: link_eef
+      alpha: 0.005
+
+    # F/T sensor — reads directly from ros2_control hardware interfaces
+    ft_sensor:
+      name: tcp_fts_sensor
+      frame:
+        id: link_eef
+        external: false
+      filter_coefficient: 0.05
+
+    # Control frame — where compliance is applied
+    control:
+      frame:
+        id: link_eef
+        external: false
+
+    fixed_world_frame:
+      frame:
+        id: link_base
+        external: false
+
+    # Gravity compensation for end-effector payload (gripper + any held object)
+    gravity_compensation:
+      frame:
+        id: link_eef
+        external: false
+      CoG:
+        pos:
+          - 0.0
+          - 0.0
+          - 0.04
+        force: 0.0   # adjust when payload is mounted
+
+    # Admittance dynamics (6 axes: x, y, z, rx, ry, rz)
+    # F = M*a + D*v + S*(x - x_d)
+    # Start conservative — tune once running on real hardware
+    admittance:
+      selected_axes:
+        - true    # x
+        - true    # y
+        - true    # z
+        - true    # rx
+        - true    # ry
+        - true    # rz
+
+      # Mass — lower = more responsive, higher = smoother
+      mass:
+        - 5.0
+        - 5.0
+        - 5.0
+        - 0.5
+        - 0.5
+        - 0.5
+
+      # Damping ratio — 1.0 = critically damped, >1 = overdamped
+      damping_ratio:
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+
+      # Stiffness — higher = stiffer (resists displacement more)
+      stiffness:
+        - 200.0
+        - 200.0
+        - 200.0
+        - 20.0
+        - 20.0
+        - 20.0
+
+    # Joint-level damping for stability (default 5.0, higher = more sluggish)
+    joint_damping: 5.0
+
+    enable_parameter_update_without_reactivation: true

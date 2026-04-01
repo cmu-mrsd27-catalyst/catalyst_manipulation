@@ -115,7 +115,7 @@ def generate_launch_description():
     sensors_3d_yaml = load_yaml('catalyst_moveit_config', 'config/sensors_3d.yaml')
     octomap_config = {
         'octomap_frame': 'link_base',
-        'octomap_resolution': 0.02,
+        'octomap_resolution': 0.005,
     }
 
     # move_group node

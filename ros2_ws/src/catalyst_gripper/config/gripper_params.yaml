@@ -11,13 +11,13 @@ protocol_version: 1.0
 dxl_id: 7
 
 # Minimum position limit (fully open end)
-pos_min: 30
+pos_min: 219
 
 # Maximum position limit (fully closed end)
-pos_max: 720
+pos_max: 983
 
 # Goal position when opening (should be near pos_min)
-open_pos: 30
+open_pos: 219
 
 # Motor speed during opening, range 0..1023 (0 = max rpm)
 open_speed: 90

@@ -2,12 +2,11 @@
 """
 Test script for AprilTag-based grasping.
 
-Subscribes to /world_model to get AprilTag poses in link_base frame.
-Uses pre-defined grasp transforms (H_TCP_TO, H_TCP_TB) from gripper_pose.json
-to compute target TCP poses relative to detected tags.
-
-If both tags (tag_object, tag_base) are visible, computes the grasp pose
-from each and averages them. If only one is visible, uses that one alone.
+Flow:
+  1. Explore for the liquid handler AprilTag by sweeping joint1
+  2. Once found, compute the grasp pose from the tag pose and a
+     pre-calibrated H_TCP_TAG transform (loaded from gripper_pose.json)
+  3. Execute the grasp sequence
 """
 
 import json
@@ -23,7 +22,10 @@ import tf2_ros
 from rclpy.time import Time
 
 from std_msgs.msg import String
+from std_srvs.srv import Empty, SetBool
 from catalyst_interfaces.srv import JsonCommand
+
+from catalyst_execute.exploration import TagExplorer
 
 JOINT_SERVICE = '/joint_command'
 CARTESIAN_SERVICE = '/cartesian_command'
@@ -90,92 +92,11 @@ def homogeneous_to_pos_quat(H):
     return pos[0], pos[1], pos[2], qx, qy, qz, qw
 
 
-def average_quaternions(q1, q2):
-    """Average two quaternions. Ensures they're in the same hemisphere before averaging."""
-    q1 = np.array(q1)
-    q2 = np.array(q2)
-    # Flip q2 if dot product is negative (opposite hemisphere)
-    if np.dot(q1, q2) < 0:
-        q2 = -q2
-    avg = (q1 + q2) / 2.0
-    return avg / np.linalg.norm(avg)
-
-
-def average_poses(H1, H2):
-    """Average two homogeneous transforms: mean position, averaged quaternion."""
-    pos1 = H1[:3, 3]
-    pos2 = H2[:3, 3]
-    avg_pos = (pos1 + pos2) / 2.0
-
-    q1 = rotation_matrix_to_quat(H1[:3, :3])
-    q2 = rotation_matrix_to_quat(H2[:3, :3])
-    avg_q = average_quaternions(q1, q2)
-
-    H = np.eye(4)
-    H[:3, :3] = quat_to_rotation_matrix(avg_q[0], avg_q[1], avg_q[2], avg_q[3])
-    H[:3, 3] = avg_pos
-    return H
-
-
-def compute_look_at_camera_pose(tag_position, tag_rotation, standoff=0.25, height_offset=0.05):
-    """Compute a desired camera_color_optical_frame pose that looks at the tag head-on.
-
-    Positions the camera horizontally in front of the tags (no tilt), backed off
-    along the horizontal projection of the tag normal. The camera stays level at
-    the same height as the tags (plus height_offset).
-
-    The returned frame follows optical convention: Z forward, X right, Y down.
-
-    Args:
-        tag_position: (3,) array — tag center in link_base frame
-        tag_rotation: (3,3) array — tag rotation in link_base frame
-        standoff: horizontal distance from the tags to place the camera
-        height_offset: extra upward (world-Z) shift for the viewpoint
-
-    Returns:
-        4x4 homogeneous matrix — desired camera_color_optical_frame pose in link_base
-    """
-    tag_z = tag_rotation[:, 2]  # tag normal
-
-    # Project tag normal onto XY plane to get horizontal back-off direction
-    horizontal_dir = tag_z.copy()
-    horizontal_dir[2] = 0.0
-    norm = np.linalg.norm(horizontal_dir)
-    if norm < 1e-6:
-        # Tag normal is purely vertical; fall back to backing off along base-X
-        horizontal_dir = np.array([1.0, 0.0, 0.0])
-    else:
-        horizontal_dir = horizontal_dir / norm
-
-    # Camera position: back off horizontally, stay at tag height + offset
-    cam_pos = tag_position + standoff * horizontal_dir
-    cam_pos[2] = tag_position[2] + height_offset
-
-    # Camera Z axis: points horizontally from camera toward tag center (no tilt)
-    cam_z = tag_position - cam_pos
-    cam_z[2] = 0.0  # force level — no vertical component
-    cam_z = cam_z / np.linalg.norm(cam_z)
-
-    # Camera Y axis: points down (optical convention)
-    cam_y = np.array([0.0, 0.0, -1.0])
-
-    # Camera X axis: completes right-handed frame (points right)
-    cam_x = np.cross(cam_y, cam_z)
-    cam_x = cam_x / np.linalg.norm(cam_x)
-
-    H = np.eye(4)
-    H[:3, 0] = cam_x
-    H[:3, 1] = cam_y
-    H[:3, 2] = cam_z
-    H[:3, 3] = cam_pos
-    return H
-
-
 class AprilTagGraspNode(Node):
     def __init__(self):
         super().__init__('test_apriltag_grasping')
 
-        # Load grasp transforms from JSON
+        # Load grasp transform from JSON
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             'config', 'gripper_pose.json'
@@ -190,16 +111,18 @@ class AprilTagGraspNode(Node):
         with open(config_path, 'r') as f:
             grasp_data = json.load(f)
 
-        self._H_TCP_TO = np.array(grasp_data['H_TCP_TO'])  # TCP w.r.t. tag_object
-        # self._H_TCP_TB = np.array(grasp_data['H_TCP_TB'])  # TCP w.r.t. tag_base
-        self.get_logger().info(f'Loaded grasp transforms from {config_path}')
+        # H_TCP_TAG: TCP pose relative to the liquid handler tag
+        # (key is H_TCP_TO in the JSON — will be recalibrated by user)
+        self._H_TCP_TAG = np.array(grasp_data['H_TCP_TO_stand1'])
+        self.get_logger().info(f'Loaded grasp transform from {config_path}')
 
         # TF2 buffer for looking up transforms between frames
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
 
-        # World model state
+        # World model state (with timestamp tracking)
         self._world_model = None
+        self._world_model_ts = None
         self.create_subscription(String, '/world_model', self._world_model_cb, 10)
 
         # Service clients
@@ -207,9 +130,17 @@ class AprilTagGraspNode(Node):
         self._cartesian_client = self.create_client(JsonCommand, CARTESIAN_SERVICE)
         self._gripper_client = self.create_client(JsonCommand, GRIPPER_SERVICE)
         self._guide_mode_client = self.create_client(JsonCommand, GUIDE_MODE_SERVICE)
+        self._clear_octomap_client = self.create_client(Empty, '/clear_octomap')
+        self._set_octomap_client = self.create_client(SetBool, '/set_octomap_enabled')
 
     def _world_model_cb(self, msg: String):
-        self._world_model = json.loads(msg.data)
+        data = json.loads(msg.data)
+        self._world_model_ts = data.get('timestamp')
+        self._world_model = data
+
+    def get_world_model(self):
+        """Return (timestamp, world_model_dict) tuple for TagExplorer."""
+        return (self._world_model_ts, self._world_model)
 
     def wait_for_services(self):
         self.get_logger().info('Waiting for motion planner services...')
@@ -230,99 +161,38 @@ class AprilTagGraspNode(Node):
         self.get_logger().info('World model data received.')
         return True
 
-    def _get_tag_H(self, tag_frame):
-        """Get tag's 4x4 homogeneous matrix in link_base from world model, or None."""
-        rclpy.spin_once(self, timeout_sec=0.5)
-        if self._world_model is None:
-            return None
-        for tag in self._world_model.get('apriltags', []):
-            if tag['frame'] == tag_frame and tag['pose_in_base'] is not None:
-                pose = tag['pose_in_base']
-                return pose_to_homogeneous(pose['position'], pose['orientation'])
-        return None
-
-    def compute_grasp_pose(self, num_samples=15, sample_interval=0.1):
-        """Compute target TCP pose in link_base using visible AprilTags.
-
-        Takes multiple samples, rejects position outliers (beyond 1.5 * IQR),
-        and averages the remaining poses for a stable estimate.
-
-        Args:
-            num_samples: number of detection readings to collect
-            sample_interval: seconds between readings
+    def explore_for_tag(self):
+        """Use TagExplorer to sweep joint1 and find the liquid handler tag.
 
         Returns:
-            (H_grasp, H_to, H_tb) — averaged grasp pose and last raw tag poses
+            (tag_pose, joint1_deg) tuple. tag_pose is a dict with 'position'
+            and 'orientation' in link_base, or (None, None) if not found.
         """
-        self.get_logger().info(f'Collecting {num_samples} tag samples...')
-
-        samples_to = []  # list of 4x4 grasp poses from tag_object
-        samples_tb = []  # list of 4x4 grasp poses from tag_base
-        last_H_to = None
-        last_H_tb = None
-
-        for i in range(num_samples):
-            H_to = self._get_tag_H('tag_object')
-            H_tb = self._get_tag_H('tag_base')
-
-            if H_to is not None:
-                last_H_to = H_to
-                samples_to.append(H_to @ self._H_TCP_TO)
-            if H_tb is not None:
-                last_H_tb = H_tb
-                samples_tb.append(H_tb @ self._H_TCP_TB)
-
-            time.sleep(sample_interval)
-
-        self.get_logger().info(
-            f'Collected {len(samples_to)} tag_object, {len(samples_tb)} tag_base samples'
+        explorer = TagExplorer(
+            node=self,
+            joint_client=self._joint_client,
+            world_model_getter=self.get_world_model,
         )
+        return explorer.search()
 
-        # Merge all grasp pose samples
-        all_samples = samples_to + samples_tb
-        if not all_samples:
-            self.get_logger().error('No AprilTags visible in any sample')
-            return None, last_H_to, last_H_tb
+    def compute_grasp_pose(self, tag_pose):
+        """Compute the grasp TCP pose from a detected tag pose.
 
-        # Extract positions and filter outliers using IQR on Euclidean distance from median
-        positions = np.array([H[:3, 3] for H in all_samples])
-        median_pos = np.median(positions, axis=0)
-        distances = np.linalg.norm(positions - median_pos, axis=1)
+        Args:
+            tag_pose: dict with 'position' and 'orientation' keys (from world model).
 
-        q1 = np.percentile(distances, 25)
-        q3 = np.percentile(distances, 75)
-        iqr = q3 - q1
-        threshold = q3 + 1.5 * iqr
-
-        inlier_mask = distances <= threshold
-        inliers = [H for H, keep in zip(all_samples, inlier_mask) if keep]
-        n_rejected = len(all_samples) - len(inliers)
-
-        if n_rejected > 0:
-            self.get_logger().info(f'Rejected {n_rejected} outlier(s) out of {len(all_samples)} samples')
-
-        if not inliers:
-            self.get_logger().warn('All samples were outliers — using all samples anyway')
-            inliers = all_samples
-
-        # Average the inlier poses: mean position, iteratively averaged quaternion
-        avg_pos = np.mean([H[:3, 3] for H in inliers], axis=0)
-        avg_q = np.array(rotation_matrix_to_quat(inliers[0][:3, :3]))
-        for H in inliers[1:]:
-            avg_q = average_quaternions(avg_q, rotation_matrix_to_quat(H[:3, :3]))
-
-        H_grasp = np.eye(4)
-        H_grasp[:3, :3] = quat_to_rotation_matrix(avg_q[0], avg_q[1], avg_q[2], avg_q[3])
-        H_grasp[:3, 3] = avg_pos
+        Returns:
+            4x4 homogeneous matrix for the target TCP pose in link_base.
+        """
+        H_tag = pose_to_homogeneous(tag_pose['position'], tag_pose['orientation'])
+        H_grasp = H_tag @ self._H_TCP_TAG
 
         x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_grasp)
         self.get_logger().info(
-            f'Averaged grasp pose ({len(inliers)} inliers): '
-            f'pos=({x:.4f}, {y:.4f}, {z:.4f}) '
+            f'Grasp pose: pos=({x:.4f}, {y:.4f}, {z:.4f}) '
             f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
         )
-
-        return H_grasp, last_H_to, last_H_tb
+        return H_grasp
 
     def _call(self, client, command):
         req = JsonCommand.Request()
@@ -337,10 +207,35 @@ class AprilTagGraspNode(Node):
         self.get_logger().error('Service call failed')
         return False
 
+    def clear_octomap(self):
+        """Clear the MoveIt octomap so grasped objects aren't treated as obstacles."""
+        self.get_logger().info('Clearing octomap...')
+        future = self._clear_octomap_client.call_async(Empty.Request())
+        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+        if future.result() is not None:
+            self.get_logger().info('Octomap cleared.')
+            return True
+        self.get_logger().warn('Failed to clear octomap.')
+        return False
+
+    def set_octomap_enabled(self, enabled: bool):
+        """Enable or disable octomap collision checking for planning."""
+        label = 'Enabling' if enabled else 'Disabling'
+        self.get_logger().info(f'{label} octomap for planning...')
+        req = SetBool.Request()
+        req.data = enabled
+        future = self._set_octomap_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+        if future.result() is not None:
+            self.get_logger().info(f'Octomap {future.result().message}')
+            return future.result().success
+        self.get_logger().warn(f'Failed to set octomap enabled={enabled}')
+        return False
+
     def move_pose(self, pose_name, speed=1.0):
         return self._call(self._joint_client, {'pose': pose_name, 'speed': speed})
 
-    def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.2, keep_orientation=False, straight_line = False):
+    def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.2, keep_orientation=False, straight_line=False):
         return self._call(self._cartesian_client, {
             'x': x, 'y': y, 'z': z,
             'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw,
@@ -356,35 +251,23 @@ class AprilTagGraspNode(Node):
         return self._call(self._gripper_client, {'action': 'close'})
 
     def move_to_pre_grasp(self, H_target, speed=0.1, keep_orientation=False, straight_line=False):
-        """Compute grasp pose from visible tags and move there."""
-        self.get_logger().info('Computing grasp pose from visible AprilTags...')
-        # H_target = self.compute_grasp_pose()
+        """Move to 5cm above the grasp pose."""
         if H_target is None:
             return False
-
         x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_target)
         self.get_logger().info(
-            f'Target TCP in link_base: '
-            f'pos=({x:.4f}, {y:.4f}, {z:.4f}) '
-            f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
+            f'Pre-grasp TCP: pos=({x:.4f}, {y:.4f}, {z+0.05:.4f})'
         )
-
-        return self.move_cartesian(x, y, z+0.05, qx, qy, qz, qw, speed, keep_orientation, straight_line)
+        return self.move_cartesian(x, y, z + 0.05, qx, qy, qz, qw, speed, keep_orientation, straight_line)
 
     def move_to_grasp(self, H_target, speed=0.1, keep_orientation=False, straight_line=False):
-        """Compute grasp pose from visible tags and move there."""
-        self.get_logger().info('Computing grasp pose from visible AprilTags...')
-        # H_target = self.compute_grasp_pose()
+        """Move to the grasp pose."""
         if H_target is None:
             return False
-
         x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_target)
         self.get_logger().info(
-            f'Target TCP in link_base: '
-            f'pos=({x:.4f}, {y:.4f}, {z:.4f}) '
-            f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
+            f'Grasp TCP: pos=({x:.4f}, {y:.4f}, {z:.4f})'
         )
-
         return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed, keep_orientation, straight_line)
 
     def _get_current_tcp_pose(self):
@@ -398,7 +281,7 @@ class AprilTagGraspNode(Node):
         p = tcp['position']
         o = tcp['orientation']
         return [p['x'], p['y'], p['z'], o['qx'], o['qy'], o['qz'], o['qw']]
-    
+
     def _lookup_tf_as_H(self, parent_frame, child_frame):
         """Look up a TF transform and return as 4x4 homogeneous matrix, or None."""
         try:
@@ -415,64 +298,10 @@ class AprilTagGraspNode(Node):
             self.get_logger().warn(f'TF lookup {parent_frame} → {child_frame} failed: {e}')
             return None
 
-    def move_to_look_at_tags(self, standoff=0.25, height_offset=0.07, speed=0.1):
-        """Move the arm so the camera looks at the AprilTags head-on.
-
-        1. Gets tag poses from world model
-        2. Computes desired camera_color_optical_frame pose (looking at tags)
-        3. Uses TF to get camera_color_optical_frame → link_tcp transform
-        4. Converts to desired link_tcp pose in link_base and moves there
-
-        Returns True on success, False otherwise.
-        """
-        H_to = self._get_tag_H('tag_object')
-        H_tb = self._get_tag_H('tag_base')
-
-        # Gather available tag positions and rotations
-        positions = []
-        rotations = []
-        if H_to is not None:
-            positions.append(H_to[:3, 3])
-            rotations.append(H_to[:3, :3])
-        if H_tb is not None:
-            positions.append(H_tb[:3, 3])
-            rotations.append(H_tb[:3, :3])
-
-        if not positions:
-            self.get_logger().error('No AprilTags visible — cannot compute look-at pose')
-            return False
-
-        tag_position = np.mean(positions, axis=0)
-        tag_rotation = rotations[0]
-
-        # Desired camera_color_optical_frame pose in link_base
-        H_co_base_desired = compute_look_at_camera_pose(
-            tag_position, tag_rotation, standoff, height_offset
-        )
-
-        # Get the fixed transform: camera_color_optical_frame → link_tcp via TF
-        H_tcp_co = self._lookup_tf_as_H('camera_color_optical_frame', 'link_tcp')
-        if H_tcp_co is None:
-            self.get_logger().error('Cannot look up camera_color_optical_frame → link_tcp TF')
-            return False
-
-        # Desired TCP pose in link_base:
-        # H_tcp_base = H_co_base_desired @ H_tcp_co
-        H_tcp_base = H_co_base_desired @ H_tcp_co
-
-        x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_tcp_base)
-        self.get_logger().info(
-            f'Look-at TCP pose: pos=({x:.4f}, {y:.4f}, {z:.4f}) '
-            f'quat=({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f})'
-        )
-
-        return self.move_cartesian(x, y, z, qx, qy, qz, qw, speed=speed)
-
     def activate_guide_mode(self, mode):
-
         return self._call(self._guide_mode_client, {'action': mode, 'sensitivity': 5})
 
-    def _log_grasp_data(self, H_to, H_tb, H_grasp, actual_tcp_pose):
+    def _log_grasp_data(self, H_tag, H_grasp, actual_tcp_pose):
         """Append one JSON record to grasp_log.jsonl."""
         log_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'logs'
@@ -480,7 +309,6 @@ class AprilTagGraspNode(Node):
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'grasp_log.jsonl')
 
-        # Determine run_id from existing lines
         run_id = 0
         if os.path.exists(log_path):
             with open(log_path, 'r') as f:
@@ -495,8 +323,7 @@ class AprilTagGraspNode(Node):
         record = {
             'timestamp': datetime.now().isoformat(timespec='seconds'),
             'run_id': run_id,
-            'tag_object_pose': h_to_list(H_to),
-            'tag_base_pose': h_to_list(H_tb),
+            'tag_pose': h_to_list(H_tag),
             'computed_grasp_pose': h_to_list(H_grasp),
             'actual_tcp_pose': [round(float(v), 6) for v in actual_tcp_pose] if actual_tcp_pose else None,
         }
@@ -518,78 +345,87 @@ def main():
         return
 
     node.get_logger().info('=== Starting AprilTag grasp sequence ===')
-    # node.open_gripper()
-    time.sleep(1)
-    # node.close_gripper()
-    # time.sleep(1)
-    # node.open_gripper()
 
-    # # node.open_gripper()
-    for i in range(1):
+    node.move_pose('home', speed=0.2)
+    time.sleep(0.5)
 
-        # 1. Home and open gripper
-        node.move_pose('home', speed=0.2)
+    node.open_gripper()
+    
+    # 1. Explore for the liquid handler tag
+    node.get_logger().info('--- Exploring for AprilTag ---')
+    tag_pose, tag_j1 = node.explore_for_tag()
+    if tag_pose is None:
+        node.get_logger().error('Tag not found during exploration. Aborting.')
+        node.destroy_node()
+        rclpy.shutdown()
+        return
+
+    # 2. Compute grasp pose from detected tag
+    H_grasp = node.compute_grasp_pose(tag_pose)
+
+    # 3. Move to home pose with joint1 facing the machine
+    node.get_logger().info(f'--- Moving to home facing machine (j1={tag_j1:.1f} deg) ---')
+    node._call(node._joint_client, {
+        'joints': [tag_j1, 0.0, 0.0, 0.0, 0.0, 0.0],
+        'speed': 0.2,
+    })
+    time.sleep(0.5)
+
+    time.sleep(1.0)
+
+    # 4. Move to pre-grasp with octomap enabled (collision-aware)
+    node.get_logger().info('--- Moving to pre-grasp pose ---')
+    if node.move_to_pre_grasp(H_grasp, speed=0.1):
         time.sleep(0.5)
-        # node.open_gripper()
-        # node.move_cartesian(0.383682, 2.2e-05, 0.143111, 0.973144, 5e-06, -0.230197, -4e-06, speed=0.2, keep_orientation=False)
-        # time.sleep(1)
+    else:
+        node.get_logger().warn('Failed to reach pre-grasp pose')
 
-        # Move camera to look at tags head-on for better pose estimation
-        node.get_logger().info('--- Moving to look at tags head-on ---')
-        if not node.move_to_look_at_tags():
-            node.get_logger().warn('Failed to move to look-at pose, continuing anyway')
-        time.sleep(1)
+    # 5. Disable octomap for the short pre-grasp -> grasp motion
+    node.set_octomap_enabled(False)
+    # node.clear_octomap()
 
-        H_target, H_to, H_tb = node.compute_grasp_pose()
-        time.sleep(1)
+    node.get_logger().info('--- Moving to grasp pose ---')
+    if node.move_to_grasp(H_grasp, speed=0.01):
+        time.sleep(0.5)
+    else:
+        node.get_logger().warn('Failed to reach grasp pose')
 
-        # 2. Move to grasp pose computed from visible tag(s)
-        node.get_logger().info('--- Moving to AprilTag grasp pose ---')
-        if node.move_to_pre_grasp(H_target, speed=0.1):
-            # time.sleep(0.5)
-            # node.close_gripper()
+    node.close_gripper()
+    time.sleep(1.0)
+
+    # 6. Re-enable octomap so subsequent motions are collision-aware
+    node.set_octomap_enabled(True)
+
+    node.activate_guide_mode('enable')
+    to_move = input("type anything to continue")
+    node.activate_guide_mode('disable')
+
+    time.sleep(0.5)
+
+    # 4. Retreat: move 5cm above current TCP pose
+    current_tcp = node._get_current_tcp_pose()
+    if current_tcp is not None:
+        cx, cy, cz, cqx, cqy, cqz, cqw = current_tcp
+        if node.move_cartesian(cx, cy, cz + 0.05, cqx, cqy, cqz, cqw, speed=0.01, keep_orientation=True, straight_line=True):
             time.sleep(0.5)
         else:
-            node.get_logger().warn('Failed to reach pre-grasp pose')
+            node.get_logger().warn('Failed to reach post-grasp retreat pose')
+    else:
+        node.get_logger().warn('Could not read current TCP pose for retreat')
 
-        if node.move_to_grasp(H_target, speed=0.01, keep_orientation = True):
-            # time.sleep(0.5)
-            # node.close_gripper()
-            time.sleep(0.5)
-        else:
-            node.get_logger().warn('Failed to reach grasp pose')
+    # # 5. Return home
 
-        # node.activate_guide_mode('enable')
+    node._call(node._joint_client, {
+        'joints': [tag_j1, 0.0, 0.0, 0.0, 0.0, 0.0],
+        'speed': 0.1,
+    })
+    time.sleep(0.5)
 
-        # node.close_gripper()
-        to_move = input("type anything to continue")
+    node.move_pose('home', speed=0.1)
+    time.sleep(0.5)
+    node.open_gripper()
 
-        # Log grasp data after reaching grasp pose
-        # time.sleep(1)  # let arm settle
-        # actual_tcp = node._get_current_tcp_pose()
-        # node._log_grasp_data(H_to, H_tb, H_target, actual_tcp)
-
-        # node.activate_guide_mode('disable')
-        time.sleep(0.5)
-
-        # Move 5cm above current TCP pose (arm may have shifted during guide mode)
-        current_tcp = node._get_current_tcp_pose()
-        if current_tcp is not None:
-            cx, cy, cz, cqx, cqy, cqz, cqw = current_tcp
-            if node.move_cartesian(cx, cy, cz + 0.05, cqx, cqy, cqz, cqw, speed=0.01, keep_orientation=True, straight_line=True):
-                time.sleep(0.5)
-            else:
-                node.get_logger().warn('Failed to reach post-grasp retreat pose')
-        else:
-            node.get_logger().warn('Could not read current TCP pose for retreat')
-
-        # 3. Return home
-        node.move_pose('home', speed=0.2)
-        time.sleep(1)
-        # node.open_gripper()
-        time.sleep(0.5)
-
-    node.get_logger().info('=== AprilTag grasp sequence {i} complete ===')
+    node.get_logger().info('=== AprilTag grasp sequence complete ===')
 
     node.destroy_node()
     rclpy.shutdown()

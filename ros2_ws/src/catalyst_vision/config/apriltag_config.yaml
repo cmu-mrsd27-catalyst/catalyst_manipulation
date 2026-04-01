@@ -26,6 +26,6 @@
     #   sizes: [0.0584]
 
     tag:
-      ids: [3]
-      frames: [tag_object]
-      sizes: [0.04]
+      ids: [14]
+      frames: [tag_liquid_handler]
+      sizes: [0.1]

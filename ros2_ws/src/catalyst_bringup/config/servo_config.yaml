@@ -1,0 +1,62 @@
+###############################################
+# MoveIt Servo config for Catalyst xArm-6
+# Adapted from xarm_moveit_servo for admittance control testing
+###############################################
+
+use_gazebo: false
+
+## Properties of incoming commands
+command_in_type: "speed_units"  # cmds are in m/s and rad/s
+scale:
+  linear:  0.3   # Max linear velocity [m/s] — conservative for admittance testing
+  rotational:  0.5  # Max angular velocity [rad/s]
+  joint: 0.5
+
+## Properties of outgoing commands
+publish_period: 0.01  # 100 Hz — matches controller update rate
+max_expected_latency: 0.1
+low_latency_mode: false  # Regular periodic publishing for admittance control
+
+# Output type to match xarm6_traj_controller
+command_out_type: trajectory_msgs/JointTrajectory
+
+publish_joint_positions: true
+publish_joint_velocities: false
+publish_joint_accelerations: false
+
+## Incoming Joint State properties
+low_pass_filter_coeff: 2.0
+
+## MoveIt properties
+move_group_name: xarm6
+planning_frame: link_base
+
+## Other frames
+ee_frame_name: link_eef
+robot_link_command_frame: link_base
+
+## Stopping behaviour
+incoming_command_timeout: 0.2
+num_outgoing_halt_msgs_to_publish: 4
+
+## Singularity and joint limit handling
+lower_singularity_threshold: 10.0
+hard_stop_singularity_threshold: 30.0
+leaving_singularity_threshold_multiplier: 2.0
+joint_limit_margins: [0.12]
+
+## Topic names
+cartesian_command_in_topic: ~/delta_twist_cmds
+joint_command_in_topic: ~/delta_joint_cmds
+joint_topic: /joint_states
+status_topic: ~/status
+command_out_topic: /xarm6_traj_controller/joint_trajectory
+
+## Collision checking
+check_collisions: true
+collision_check_rate: 10.0
+collision_check_type: threshold_distance
+self_collision_proximity_threshold: 0.01
+scene_collision_proximity_threshold: 0.02
+collision_distance_safety_factor: 1000.0
+min_allowable_collision_distance: 0.01

@@ -58,7 +58,7 @@ APRILTAG_TIMEOUT = 1.0
 
 # Tag ID to semantic frame name mapping
 TAG_FRAME_NAMES = {
-    3: 'tag_object',
+    14: 'tag_liquid_handler',
 }
 
 

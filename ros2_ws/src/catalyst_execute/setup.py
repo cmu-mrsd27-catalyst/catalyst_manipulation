@@ -25,6 +25,10 @@ setup(
             'guide_mode = catalyst_execute.guide_mode:main',
             'test_apriltag_grasping = catalyst_execute.test_apriltag_grasping:main',
             'plot_grasp_log = catalyst_execute.plot_grasp_log:main',
+            'test_admittance = catalyst_execute.test_admittance:main',
+            'sdk_admittance = catalyst_execute.sdk_admittance:main',
+            'test_place_admittance = catalyst_execute.test_place_admittance:main',
+            'pick_and_place = catalyst_execute.pick_and_place:main',
         ],
     },
 )

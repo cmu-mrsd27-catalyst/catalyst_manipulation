@@ -95,9 +95,14 @@ class GripperNode(Node):
         )
 
     def _ticks_to_meters(self, ticks):
-        """Convert servo ticks to meters for the joint state."""
+        """Convert servo ticks to meters for the joint state.
+
+        Servo: pos_min (30) = open, pos_max (720) = closed.
+        URDF:  0.0 = closed, max_pos (0.037) = open.
+        So invert the ratio.
+        """
         ratio = (ticks - self._cfg.pos_min) / (self._cfg.pos_max - self._cfg.pos_min)
-        return max(0.0, min(self._max_pos, ratio * self._max_pos))
+        return max(0.0, min(self._max_pos, (1.0 - ratio) * self._max_pos))
 
     def _handle_gripper_command(self, request, response):
         """Handle GripperCommand service calls."""

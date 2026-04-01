@@ -55,7 +55,7 @@ def generate_launch_description():
     # ── Resolve mode at description-generation time ──
     sim_mode = _get_launch_arg('sim', 'false')
     robot_ip = _get_launch_arg('robot_ip', '192.168.1.212')
-
+    ft_sensor_ip = _get_launch_arg('ft_sensor_ip', '192.168.2.1')
     is_real = (sim_mode == 'false')
     is_fake = (sim_mode == 'fake')
     is_gazebo = (sim_mode == 'gazebo')
@@ -86,6 +86,8 @@ def generate_launch_description():
     ]
     if is_real:
         xacro_args.append(f'robot_ip:={robot_ip}')
+        xacro_args.append('add_ft_sensor:=true')
+        xacro_args.append(f'ft_sensor_ip:={ft_sensor_ip}')
 
     urdf_content = subprocess.check_output(xacro_args).decode('utf-8')
 
@@ -125,7 +127,7 @@ def generate_launch_description():
         sensors_3d_yaml = load_yaml('catalyst_moveit_config', 'config/sensors_3d.yaml')
         octomap_config = {
             'octomap_frame': 'link_base',
-            'octomap_resolution': 0.02,
+            'octomap_resolution': 0.005,
         }
     else:
         sensors_3d_yaml = {}
@@ -350,6 +352,28 @@ def generate_launch_description():
     )
     actions.append(delayed_arm_controller)
 
+    # F/T sensor broadcaster after joint_state_broadcaster (real hardware only)
+    if is_real:
+        ft_broadcaster_spawner = Node(
+            package='controller_manager',
+            executable='spawner',
+            arguments=['force_torque_sensor_broadcaster', '--controller-manager', '/controller_manager'],
+            output='screen',
+        )
+        delayed_ft_broadcaster = RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[ft_broadcaster_spawner],
+            )
+        )
+        actions.append(delayed_ft_broadcaster)
+
+        # Admittance controller — NOT loaded at startup.
+        # Loading it inactive here causes the HW plugin's _activate_controller()
+        # to try reactivating it alongside xarm6_traj_controller after guide/teach
+        # mode, which fails due to conflicting command interfaces.
+        # Load it on demand via sdk_admittance.py or admittance_test.launch.py.
+
     # gripper controller after joint_state_broadcaster (sim modes only)
     if not is_real:
         gripper_controller_spawner = Node(
@@ -490,5 +514,10 @@ def generate_launch_description():
             'rviz',
             default_value='true',
             description='Launch RViz',
+        ),
+        DeclareLaunchArgument(
+            'ft_sensor_ip',
+            default_value='192.168.2.1',
+            description='OnRobot F/T sensor IP address (only used when sim:=false)',
         ),
     ] + actions)

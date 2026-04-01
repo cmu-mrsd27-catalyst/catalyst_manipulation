@@ -27,8 +27,13 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-moveit-resources \
     ros-jazzy-trac-ik-kinematics-plugin \
     ros-jazzy-force-torque-sensor-broadcaster \
+    ros-jazzy-admittance-controller \
+    ros-jazzy-kinematics-interface-kdl \
+    ros-jazzy-ros2controlcli \
     ros-jazzy-octomap \
     ros-jazzy-octomap-msgs \
+    ros-jazzy-asio-cmake-module \
+    libasio-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Gazebo Harmonic + ROS 2 bridge + ros2_control plugin

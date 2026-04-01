@@ -1,9 +1,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include <moveit/move_group_interface/move_group_interface.hpp>
+#include <moveit/planning_scene_interface/planning_scene_interface.hpp>
 #include <moveit_msgs/msg/orientation_constraint.hpp>
 #include <moveit_msgs/msg/constraints.hpp>
+#include <moveit_msgs/msg/planning_scene.hpp>
+#include <moveit_msgs/srv/apply_planning_scene.hpp>
+#include <moveit_msgs/srv/get_planning_scene.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <catalyst_interfaces/srv/json_command.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <nlohmann/json.hpp>
 
 #include <moveit/robot_state/robot_state.hpp>
@@ -83,6 +88,88 @@ int main(int argc, char** argv)
     // arm.setNumPlanningAttempts(10);
 
     RCLCPP_INFO(logger, "MoveGroupInterface ready for '%s'", PLANNING_GROUP_ARM.c_str());
+
+    // PlanningSceneInterface for applying ACM diffs (has its own executor, no deadlock)
+    moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
+
+    // Fetch the full ACM at startup (outside any callback — no deadlock risk).
+    // Retry until the ACM is populated (move_group may still be loading the SRDF).
+    moveit_msgs::msg::AllowedCollisionMatrix cached_acm;
+    {
+        auto get_scene_client = service_node->create_client<moveit_msgs::srv::GetPlanningScene>(
+            "/get_planning_scene");
+        if (get_scene_client->wait_for_service(std::chrono::seconds(10))) {
+            for (int attempt = 0; attempt < 10; ++attempt) {
+                auto get_req = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+                get_req->components.components = 128;  // ALLOWED_COLLISION_MATRIX
+                auto future = get_scene_client->async_send_request(get_req);
+                if (future.wait_for(std::chrono::seconds(5)) == std::future_status::ready) {
+                    auto acm = future.get()->scene.allowed_collision_matrix;
+                    if (!acm.entry_names.empty()) {
+                        cached_acm = acm;
+                        RCLCPP_INFO(logger, "Cached ACM with %zu entries", cached_acm.entry_names.size());
+                        break;
+                    }
+                    RCLCPP_INFO(logger, "ACM empty on attempt %d, retrying in 1s...", attempt + 1);
+                } else {
+                    RCLCPP_WARN(logger, "ACM fetch timed out on attempt %d", attempt + 1);
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+            if (cached_acm.entry_names.empty()) {
+                RCLCPP_WARN(logger, "Failed to get populated ACM after retries — octomap toggle may not work");
+            }
+        } else {
+            RCLCPP_WARN(logger, "get_planning_scene not available — octomap toggle may not work");
+        }
+    }
+
+    // ===================== Set Octomap Enabled Service =====================
+    auto set_octomap_service = service_node->create_service<std_srvs::srv::SetBool>(
+        "/set_octomap_enabled",
+        [&planning_scene_interface, &cached_acm, &logger](
+            const std_srvs::srv::SetBool::Request::SharedPtr request,
+            std_srvs::srv::SetBool::Response::SharedPtr response)
+        {
+            if (cached_acm.entry_names.empty()) {
+                RCLCPP_ERROR(logger, "No cached ACM available — cannot toggle octomap");
+                response->success = false;
+                response->message = "No cached ACM";
+                return;
+            }
+
+            // Update <octomap> default entry in the cached ACM
+            bool found = false;
+            for (size_t i = 0; i < cached_acm.default_entry_names.size(); ++i) {
+                if (cached_acm.default_entry_names[i] == "<octomap>") {
+                    cached_acm.default_entry_values[i] = !request->data;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                cached_acm.default_entry_names.push_back("<octomap>");
+                cached_acm.default_entry_values.push_back(!request->data);
+            }
+
+            // Apply the full ACM (entry_names is populated so the diff guard passes)
+            moveit_msgs::msg::PlanningScene ps;
+            ps.is_diff = true;
+            ps.allowed_collision_matrix = cached_acm;
+
+            if (!request->data) {
+                RCLCPP_INFO(logger, "Octomap DISABLED for planning (collisions allowed)");
+            } else {
+                RCLCPP_INFO(logger, "Octomap ENABLED for planning (collisions checked)");
+            }
+
+            bool ok = planning_scene_interface.applyPlanningScene(ps);
+            response->success = ok;
+            response->message = ok
+                ? (request->data ? "Octomap enabled" : "Octomap disabled")
+                : "applyPlanningScene failed";
+        }
+    );
 
     // Compute the "flat" EEF orientation at home (all joints zero) for keep_orientation constraint.
     // This orientation has the gripper pointing straight down — flat w.r.t. the table.
@@ -226,14 +313,15 @@ int main(int argc, char** argv)
                             RCLCPP_INFO(logger, "Straight-line + orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                         i + 1, max_attempts, tol);
 
-                            // Keep gripper flat (home orientation): lock X/Y tilt, free Z rotation
+                            // Keep gripper flat: free rotation around link_eef X, constrain Y and Z
                             moveit_msgs::msg::OrientationConstraint oc;
                             oc.header.frame_id = BASE_FRAME;
                             oc.link_name = CONSTRAINT_LINK;
                             oc.orientation = flat_orientation;
-                            oc.absolute_x_axis_tolerance = tol;
+                            oc.absolute_x_axis_tolerance = M_PI;
                             oc.absolute_y_axis_tolerance = tol;
-                            oc.absolute_z_axis_tolerance = M_PI;
+                            oc.absolute_z_axis_tolerance = tol;
+                            oc.parameterization = 1;  // ROTATION_VECTOR
                             oc.weight = 1.0;
 
                             moveit_msgs::msg::Constraints path_constraints;
@@ -347,14 +435,15 @@ int main(int argc, char** argv)
                         RCLCPP_INFO(logger, "Orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                     i + 1, max_attempts, tol);
 
-                        // Keep gripper flat (home orientation): lock X/Y tilt, free Z rotation
+                        // Keep gripper flat: free rotation around link_eef X, constrain Y and Z
                         moveit_msgs::msg::OrientationConstraint oc;
                         oc.header.frame_id = BASE_FRAME;
                         oc.link_name = CONSTRAINT_LINK;
                         oc.orientation = flat_orientation;
-                        oc.absolute_x_axis_tolerance = tol;
+                        oc.absolute_x_axis_tolerance = M_PI;
                         oc.absolute_y_axis_tolerance = tol;
-                        oc.absolute_z_axis_tolerance = M_PI;
+                        oc.absolute_z_axis_tolerance = tol;
+                        oc.parameterization = 1;  // ROTATION_VECTOR
                         oc.weight = 1.0;
 
                         moveit_msgs::msg::Constraints path_constraints;
@@ -642,8 +731,9 @@ int main(int argc, char** argv)
     }
 
     RCLCPP_INFO(logger, "Services ready:");
-    RCLCPP_INFO(logger, "  /joint_command     - Joint-space arm control");
-    RCLCPP_INFO(logger, "  /cartesian_command - Cartesian arm control");
+    RCLCPP_INFO(logger, "  /joint_command         - Joint-space arm control");
+    RCLCPP_INFO(logger, "  /cartesian_command     - Cartesian arm control");
+    RCLCPP_INFO(logger, "  /set_octomap_enabled   - Enable/disable octomap for planning");
     if (enable_gripper) {
         RCLCPP_INFO(logger, "  /gripper_command   - Gripper open/close");
     }

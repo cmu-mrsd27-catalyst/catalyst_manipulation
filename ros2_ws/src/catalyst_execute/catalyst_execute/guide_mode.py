@@ -71,11 +71,18 @@ class GuideModeNode(Node):
         for name, pos in zip(msg.name, msg.position):
             self._joint_positions[name] = pos
 
+    # TCP offset from link_eef (flange) to link_tcp (gripper tip)
+    # F/T sensor: 68mm Z + gripper TCP: 154.6mm X, 56.3mm Z
+    # In xArm SDK frame: [x, y, z, roll, pitch, yaw] in mm and degrees
+    TCP_OFFSET = [154.6, 0, 124.3, 0, 0, 0]
+
     def connect_arm(self):
         """Connect to xArm via Python SDK."""
         self.get_logger().info(f'Connecting to xArm at {self._robot_ip}...')
         try:
             self._arm = XArmAPI(self._robot_ip)
+            self._arm.set_tcp_offset(self.TCP_OFFSET)
+            self.get_logger().info(f'TCP offset set to {self.TCP_OFFSET}')
             self.get_logger().info('Connected to xArm.')
             return True
         except Exception as e:
