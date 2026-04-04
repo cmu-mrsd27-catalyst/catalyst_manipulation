@@ -24,11 +24,11 @@ from catalyst_interfaces.srv import JsonCommand
 
 
 # Exploration pose (degrees): joints 2-6 stay fixed while joint1 sweeps.
-EXPLORE_JOINTS = [141.03, -21.12, -6.52, 209.8, 43.97, 181.8]
+EXPLORE_JOINTS = [88.35, -81.80, -21.58, 191.52, -41.80, 169.44]
 
 # Joint1 sweep range (degrees) and step size
-SWEEP_START = 120.0
-SWEEP_END = 160.0
+SWEEP_START = 88.0
+SWEEP_END = 130.0
 SWEEP_STEP = 10.0
 
 # Target tag
@@ -97,6 +97,7 @@ class TagExplorer:
         )
 
         j1 = self._sweep_start
+        count = 0
         while j1 <= self._sweep_end + 1e-6:
             joints = self._explore_joints.copy()
             joints[0] = j1
@@ -114,13 +115,14 @@ class TagExplorer:
             t_cutoff = self._node.get_clock().now().nanoseconds / 1e9
 
             tag_pose = self._read_fresh_tag(t_cutoff)
-            if tag_pose is not None:
+            if tag_pose is not None and count > 0:
                 logger.info(
                     f'Tag "{self._tag_frame}" found at joint1 = {j1:.1f} deg'
                 )
                 return tag_pose, j1
 
             j1 += self._sweep_step
+            count += 1
 
         logger.warn(f'Tag "{self._tag_frame}" not found in sweep range')
         return None, None

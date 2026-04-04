@@ -481,6 +481,23 @@ def generate_launch_description():
 
     # ── Vision (real hardware only — requires RealSense camera) ──
     if is_real:
+        # ── Point cloud filter (statistical outlier removal for octomap) ──
+        pointcloud_filter_node = Node(
+            package='catalyst_vision',
+            executable='pointcloud_filter',
+            name='pointcloud_filter',
+            output='screen',
+            parameters=[{
+                'input_topic': '/camera/camera/depth/color/points',
+                'output_topic': '/filtered_pointcloud',
+                'k_neighbours': 50,
+                'std_multiplier': 0.5,
+                'voxel_size': 0.005,
+                'max_range': 0.8,
+            }],
+        )
+        actions.append(pointcloud_filter_node)
+
         vision_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(

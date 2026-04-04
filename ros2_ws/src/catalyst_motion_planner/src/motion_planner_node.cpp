@@ -84,8 +84,8 @@ int main(int argc, char** argv)
 
     arm.setPoseReferenceFrame(BASE_FRAME);
     arm.setEndEffectorLink(EE_LINK);
-    // arm.setPlanningTime(30);
-    // arm.setNumPlanningAttempts(10);
+    arm.setPlanningTime(10.0);
+    arm.setNumPlanningAttempts(5);
 
     RCLCPP_INFO(logger, "MoveGroupInterface ready for '%s'", PLANNING_GROUP_ARM.c_str());
 
@@ -249,16 +249,23 @@ int main(int argc, char** argv)
                 arm.setMaxVelocityScalingFactor(speed);
                 arm.setMaxAccelerationScalingFactor(speed);
 
-                // Plan and execute
-                moveit::planning_interface::MoveGroupInterface::Plan plan;
-                bool success = (arm.plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                if (success) {
-                    arm.execute(plan);
-                    response->response = json({{"success", true},
-                        {"message", "Joint motion succeeded"}}).dump();
-                } else {
+                // Plan and execute with retry on validation failure
+                const int MAX_RETRIES = 5;
+                bool succeeded = false;
+                for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                    auto move_result = arm.move();
+                    if (move_result == moveit::core::MoveItErrorCode::SUCCESS) {
+                        response->response = json({{"success", true},
+                            {"message", "Joint motion succeeded"}}).dump();
+                        succeeded = true;
+                        break;
+                    }
+                    RCLCPP_WARN(logger, "Joint move attempt %d/%d failed (code %d), retrying...",
+                                attempt, MAX_RETRIES, move_result.val);
+                }
+                if (!succeeded) {
                     response->response = json({{"success", false},
-                        {"message", "Planning failed"}}).dump();
+                        {"message", "Joint motion failed after " + std::to_string(MAX_RETRIES) + " attempts"}}).dump();
                 }
 
             } catch (const std::exception& e) {
@@ -467,17 +474,28 @@ int main(int argc, char** argv)
                                             : "Planning failed with orientation constraint"}
                     }).dump();
                 } else {
-                    // 4. Plan in joint space to the best IK solution
+                    // 4. Plan in joint space to the best IK solution, retry on validation failure
                     arm.setJointValueTarget(best_solution);
-                    moveit::planning_interface::MoveGroupInterface::Plan plan;
-                    bool success = (arm.plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                    if (success) {
-                        arm.execute(plan);
-                        response->response = json({{"success", true},
-                            {"message", "Cartesian motion succeeded"}}).dump();
-                    } else {
+                    const int MAX_CART_RETRIES = 5;
+                    bool cart_succeeded = false;
+                    for (int attempt = 1; attempt <= MAX_CART_RETRIES; attempt++) {
+                        moveit::planning_interface::MoveGroupInterface::Plan plan;
+                        bool plan_ok = (arm.plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                        if (plan_ok) {
+                            auto exec_res = arm.execute(plan);
+                            if (exec_res == moveit::core::MoveItErrorCode::SUCCESS) {
+                                response->response = json({{"success", true},
+                                    {"message", "Cartesian motion succeeded"}}).dump();
+                                cart_succeeded = true;
+                                break;
+                            }
+                        }
+                        RCLCPP_WARN(logger, "Cartesian move attempt %d/%d failed, retrying...",
+                                    attempt, MAX_CART_RETRIES);
+                    }
+                    if (!cart_succeeded) {
                         response->response = json({{"success", false},
-                            {"message", "Planning failed (IK succeeded but path planning failed)"}}).dump();
+                            {"message", "Cartesian motion failed after " + std::to_string(MAX_CART_RETRIES) + " attempts"}}).dump();
                     }
                 }
 
@@ -611,18 +629,17 @@ int main(int argc, char** argv)
                         }
 
                         // Step 2: Wait for HW plugin to finish deactivation and stop writing
-                        std::this_thread::sleep_for(std::chrono::seconds(2));
+                        std::this_thread::sleep_for(std::chrono::seconds(3));
 
-                        // Step 3: Set teach mode — HW plugin's write() loop now returns
-                        // early at _need_reset() and won't send conflicting servo commands.
-                        // Do NOT call clean_error/clean_warn/motion_enable here — they
-                        // reset arm mode to 0 (POSITION).
+                        // Step 3: Set teach mode directly — do NOT call clean_error/
+                        // motion_enable here, they reset mode to 0 (POSE) and the HW
+                        // plugin might briefly see "ready" and auto-reactivate controllers.
                         xarm_ptr->set_mode(2);   // TEACH
                         xarm_ptr->set_state(0);  // START
 
-                        // Step 4: Block until arm confirms mode=2, or retry with reset
+                        // Step 4: Check mode=2 (state doesn't need to be 0 — state=2 is also valid in teach)
                         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-                        bool confirmed = (xarm_ptr->mode == 2 && xarm_ptr->state == 0);
+                        bool confirmed = (xarm_ptr->mode == 2);
 
                         if (!confirmed) {
                             // Retry: the HW plugin may have reset mode to 0. Clear errors
@@ -636,9 +653,9 @@ int main(int argc, char** argv)
                             xarm_ptr->set_mode(2);   // TEACH
                             xarm_ptr->set_state(0);  // START
 
-                            // Poll until confirmed or timeout
-                            confirmed = wait_for_mode_state(2, 0,
-                                GUIDE_MODE_CONFIRM_TIMEOUT_MS, GUIDE_MODE_POLL_INTERVAL_MS);
+                            // Poll until mode=2 or timeout
+                            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                            confirmed = (xarm_ptr->mode == 2);
                         }
 
                         if (!confirmed) {

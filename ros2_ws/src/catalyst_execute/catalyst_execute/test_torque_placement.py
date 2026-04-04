@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Full pick-and-place pipeline using AprilTag detection and admittance placement.
+"""Test script for well-plate placement with F/T data logging.
+
+Full pick-and-place flow with F/T data logging during admittance placement.
 
 Flow:
-  1. Home
-  2. Explore for AprilTag
-  3. Compute pick (stand 1) and place (stand 2) poses from tag
-  4. Open gripper → pre-pick → pick → close gripper
-  5. Retract to pre-pick → home
-  6. Pre-place → admittance-controlled placement
-  7. Open gripper → retract to pre-place → home
+  1. Home → close gripper
+  2. Approach pick → pick (with guide mode) → retreat → home
+  3. Approach place → pre-place
+  4. Start F/T logging + admittance placement (same as pick_and_place.py)
+  5. Cleanup and recover controllers
+
+Saves F/T log CSV in catalyst_execute/logs/ for analysis.
 
 Usage:
-  ros2 run catalyst_execute pick_and_place --ros-args \
+  ros2 run catalyst_execute test_torque_placement --ros-args \
     -p robot_ip:=192.168.1.212 -p ft_sensor_ip:=192.168.2.1
 """
 
@@ -20,6 +22,7 @@ import os
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 
 import numpy as np
 import yaml
@@ -34,19 +37,16 @@ from catalyst_interfaces.srv import JsonCommand
 from xarm.wrapper import XArmAPI
 
 from catalyst_execute.sdk_admittance import OnRobotFTReader
-from catalyst_execute.exploration import TagExplorer
 
 JOINT_SERVICE = '/joint_command'
 CARTESIAN_SERVICE = '/cartesian_command'
 GRIPPER_SERVICE = '/gripper_command'
 GUIDE_MODE_SERVICE = '/guide_mode'
 
-# xArm mode/state constants
-XARM_MODE_SERVO = 1
 XARM_MODE_CART_VELOCITY = 5
 XARM_STATE_START = 0
 
-PRE_HEIGHT = 0.05  # 5cm above pick/place pose
+PRE_HEIGHT = 0.05  # 5cm above pick/place
 
 
 def quat_to_rotation_matrix(qx, qy, qz, qw):
@@ -104,11 +104,11 @@ def homogeneous_to_pos_quat(H):
     return pos[0], pos[1], pos[2], qx, qy, qz, qw
 
 
-class PickAndPlaceNode(Node):
+class TestTorquePlacementNode(Node):
     def __init__(self):
-        super().__init__('pick_and_place')
+        super().__init__('test_torque_placement')
 
-        # Load calibrated transforms from gripper_pose.json
+        # Load calibrated transforms
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             'config', 'gripper_pose.json'
@@ -122,9 +122,9 @@ class PickAndPlaceNode(Node):
             config = json.load(f)
         self._H_TCP_stand1 = np.array(config['H_TCP_TO_stand1'])
         self._H_TCP_stand2 = np.array(config['H_TCP_TO_stand2'])
-        self.get_logger().info(f'Loaded pick/place transforms from {config_path}')
+        self.get_logger().info(f'Loaded transforms from {config_path}')
 
-        # World model subscription
+        # World model
         self._world_model = None
         self._world_model_ts = None
         self.create_subscription(String, '/world_model', self._world_model_cb, 10)
@@ -135,14 +135,18 @@ class PickAndPlaceNode(Node):
         self.declare_parameter('rate', 100.0)
 
         # Admittance parameters
-        # Push axis is tool X (gripper rotated -90° pitch, so flange X = downward)
         self.declare_parameter('linear_gain', 0.005)
         self.declare_parameter('force_deadzone', 1.0)
         self.declare_parameter('ref_velocity_x', -0.005)
-        self.declare_parameter('place_force_threshold', 5.0)
+        self.declare_parameter('place_force_threshold', 7.0)
         self.declare_parameter('max_place_distance', 0.1)
         self.declare_parameter('compliant_axes', [0, 1, 1, 0, 0, 0])
         self.declare_parameter('max_linear_vel', 0.05)
+
+        # Corner registration parameters
+        self.declare_parameter('contact_force_threshold', 1.0)  # |Fx| to detect plate touching stand
+        self.declare_parameter('corner_force_threshold', 1.0)   # |Fy|/|Fz| to detect corner contact
+        self.declare_parameter('search_speed', 0.003)           # m/s — lateral search speed
 
         # Service clients
         self._joint_client = self.create_client(JsonCommand, JOINT_SERVICE)
@@ -159,9 +163,6 @@ class PickAndPlaceNode(Node):
         data = json.loads(msg.data)
         self._world_model_ts = data.get('timestamp')
         self._world_model = data
-
-    def get_world_model(self):
-        return (self._world_model_ts, self._world_model)
 
     def wait_for_services(self, timeout=None):
         self.get_logger().info('Waiting for services...')
@@ -199,9 +200,6 @@ class PickAndPlaceNode(Node):
     def move_pose(self, pose_name, speed=0.1):
         return self._call(self._joint_client, {'pose': pose_name, 'speed': speed})
 
-    def move_joints(self, joints_deg, speed=0.1):
-        return self._call(self._joint_client, {'joints': joints_deg, 'speed': speed})
-
     def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.1,
                        keep_orientation=False, straight_line=False):
         return self._call(self._cartesian_client, {
@@ -221,18 +219,6 @@ class PickAndPlaceNode(Node):
     def activate_guide_mode(self, mode):
         return self._call(self._guide_mode_client, {'action': mode, 'sensitivity': 5})
 
-    def get_current_tcp_pose(self):
-        """Read current TCP pose from world model."""
-        rclpy.spin_once(self, timeout_sec=0.5)
-        if self._world_model is None:
-            return None
-        tcp = self._world_model.get('tcp_pose')
-        if tcp is None:
-            return None
-        p = tcp['position']
-        o = tcp['orientation']
-        return [p['x'], p['y'], p['z'], o['qx'], o['qy'], o['qz'], o['qw']]
-
     def clear_octomap(self):
         future = self._clear_octomap_client.call_async(Empty.Request())
         rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
@@ -243,15 +229,16 @@ class PickAndPlaceNode(Node):
         future = self._set_octomap_client.call_async(req)
         rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
 
-    # ── Exploration ──
-
-    def explore_for_tag(self):
-        explorer = TagExplorer(
-            node=self,
-            joint_client=self._joint_client,
-            world_model_getter=self.get_world_model,
-        )
-        return explorer.search()
+    def get_current_tcp_pose(self):
+        rclpy.spin_once(self, timeout_sec=0.5)
+        if self._world_model is None:
+            return None
+        tcp = self._world_model.get('tcp_pose')
+        if tcp is None:
+            return None
+        p = tcp['position']
+        o = tcp['orientation']
+        return [p['x'], p['y'], p['z'], o['qx'], o['qy'], o['qz'], o['qw']]
 
     # ── Pose computation ──
 
@@ -260,109 +247,75 @@ class PickAndPlaceNode(Node):
         return H_tag @ H_TCP_TO
 
     def compute_approach_pose(self, H_target, H_tag):
-        """Compute approach pose: pull back from target along tag Z to 5cm ahead of tag.
-
-        The arm approaches along the tag's Z axis (outward from machine).
-        The approach pose has the same orientation as the target but is
-        positioned along the tag Z axis at tag_origin + 5cm * tag_Z.
-        """
         tag_pos = H_tag[:3, 3]
-        tag_z = H_tag[:3, 2]  # tag Z axis (points outward)
+        tag_z = H_tag[:3, 2]
         target_pos = H_target[:3, 3]
-
-        # Project target onto tag Z axis (distance from tag along tag Z)
         depth = np.dot(target_pos - tag_pos, tag_z)
-        # Pull back to 5cm ahead of tag
         offset = 0.05 - depth
         approach_pos = target_pos + offset * tag_z
-
-        # Keep target orientation
         H_approach = H_target.copy()
         H_approach[:3, 3] = approach_pos
         return H_approach
 
-    # ── Pick sequence (MoveIt) ──
+    # ── Pick sequence ──
 
-    def execute_pick(self, H_pick, tag_j1):
+    def execute_pick(self, H_pick):
         x, y, z, qx, qy, qz, qw = homogeneous_to_pos_quat(H_pick)
-        self.get_logger().info(
-            f'Pick pose: ({x:.4f}, {y:.4f}, {z:.4f})'
-        )
 
-
-        # Face the machine
-        # self.get_logger().info(f'=== Facing machine (j1={tag_j1:.1f} deg) ===')
-        # self.move_joints([tag_j1, 0.0, 0.0, 0.0, 0.0, 0.0])
-        # time.sleep(0.5)
-
-        # Pre-pick (5cm above)
         self.get_logger().info('=== Moving to pre-pick ===')
         if not self.move_cartesian(x, y, z + PRE_HEIGHT, qx, qy, qz, qw):
-            self.get_logger().error('Failed to reach pre-pick')
             return False
         time.sleep(0.5)
 
-        # Open gripper before picking
         self.get_logger().info('=== Opening gripper ===')
         self.open_gripper()
         time.sleep(0.5)
 
-        # Disable octomap for close-range pick motion
         self.set_octomap_enabled(False)
 
-        # Pick
         self.get_logger().info('=== Moving to pick pose ===')
-        if not self.move_cartesian(x, y, z, qx, qy, qz, qw,
-                                   speed=0.01):
-            self.get_logger().error('Failed to reach pick pose')
+        if not self.move_cartesian(x, y, z, qx, qy, qz, qw, speed=0.01):
             return False
         time.sleep(0.5)
 
-        # Close gripper to grasp
         self.get_logger().info('=== Closing gripper ===')
         self.close_gripper()
         time.sleep(1.0)
 
-        # Enable guide mode so user can verify/adjust the grasp
+        # Guide mode for user to verify grasp
         self.get_logger().info('=== Guide mode enabled — press Enter to continue ===')
         self.activate_guide_mode('enable')
-        input()
         self.activate_guide_mode('disable')
         time.sleep(0.5)
 
-        # Read current TCP pose (may have been adjusted in guide mode)
         current_tcp = self.get_current_tcp_pose()
         if current_tcp is not None:
             cx, cy, cz, cqx, cqy, cqz, cqw = current_tcp
-            # Retract 5cm above current pose
             self.get_logger().info('=== Retracting from current pose ===')
             self.move_cartesian(cx, cy, cz + PRE_HEIGHT, cqx, cqy, cqz, cqw,
                                 speed=0.01, keep_orientation=True, straight_line=True)
         else:
-            # Fallback: retract to pre-pick
             self.get_logger().info('=== Retracting to pre-pick ===')
             self.move_cartesian(x, y, z + PRE_HEIGHT, qx, qy, qz, qw,
                                 speed=0.01, keep_orientation=True, straight_line=True)
         time.sleep(0.5)
         self.set_octomap_enabled(True)
-
         return True
 
-    # ── Admittance placement ──
+    # ── Corner registration placement with F/T logging ──
 
-    def run_admittance_place(self):
+    def run_admittance_place(self, log_path):
+        """Descend until contact, then search left (Y) then forward (Z) to find corner."""
         robot_ip = self.get_parameter('robot_ip').value
         ft_ip = self.get_parameter('ft_sensor_ip').value
         rate = self.get_parameter('rate').value
         dt = 1.0 / rate
 
-        linear_gain = self.get_parameter('linear_gain').value
-        force_dz = self.get_parameter('force_deadzone').value
         ref_vx = self.get_parameter('ref_velocity_x').value
-        place_force = self.get_parameter('place_force_threshold').value
         max_dist = self.get_parameter('max_place_distance').value
-        compliant = np.array(self.get_parameter('compliant_axes').value, dtype=float)
-        max_lin_vel = self.get_parameter('max_linear_vel').value
+        contact_force = self.get_parameter('contact_force_threshold').value
+        corner_force = self.get_parameter('corner_force_threshold').value
+        search_speed = self.get_parameter('search_speed').value
 
         # Connect to F/T sensor
         self.get_logger().info(f'Connecting to F/T sensor at {ft_ip}...')
@@ -371,7 +324,7 @@ class PickAndPlaceNode(Node):
         self._ft_reader.bias()
         self.get_logger().info('F/T sensor biased.')
 
-        # Connect to xArm SDK, enter cartesian velocity mode
+        # Connect to xArm SDK
         self.get_logger().info(f'Connecting to xArm at {robot_ip}...')
         self._arm = XArmAPI(robot_ip, protocol=3)
         time.sleep(0.5)
@@ -380,61 +333,95 @@ class PickAndPlaceNode(Node):
         if self._arm.warn_code != 0:
             self._arm.clean_warn()
         self._arm.motion_enable(True)
-        self._arm.set_collision_sensitivity(0)  # Disable internal collision detection
+        self._arm.set_collision_sensitivity(0)
         self._arm.set_mode(XARM_MODE_CART_VELOCITY)
         self._arm.set_state(XARM_STATE_START)
         time.sleep(0.5)
         self.get_logger().info(f'Arm mode: {self._arm.mode} (expected {XARM_MODE_CART_VELOCITY})')
 
-        # Record start pose
         code, start_pose = self._arm.get_position()
         if code != 0:
             self.get_logger().error(f'Cannot read arm position (code={code})')
             return False, 'Failed to read arm position'
 
+        # Phase state machine: DESCEND → SEARCH_Y → SEARCH_Z → DONE
+        phase = 'DESCEND'
+        corner_pose = None
+
         self.get_logger().info(
-            f'Admittance active! ref_vx={ref_vx*1000:.1f} mm/s, '
-            f'stop at {place_force:.1f} N or {max_dist*1000:.0f} mm'
+            f'Corner registration: descend at {ref_vx*1000:.1f} mm/s, '
+            f'contact at {contact_force:.1f} N, corner at {corner_force:.1f} N, '
+            f'search speed {search_speed*1000:.1f} mm/s'
         )
 
         cycle_count = 0
-        place_success = False
         reason = 'Interrupted'
+
+        log_file = open(log_path, 'w')
+        log_file.write('time,fx,fy,fz,tx,ty,tz,vx,vy,vz,travel_mm,pos_x,pos_y,pos_z,phase\n')
+
+        t_start = time.monotonic()
 
         while rclpy.ok():
             loop_start = time.monotonic()
+            t_elapsed = time.monotonic() - t_start
 
             ft = self._ft_reader.get_ft()
 
-            # Push axis is now tool X (flange X = downward with rotated gripper)
-            if abs(ft[0]) > place_force:
-                reason = f'Force threshold: Fx={ft[0]:+.2f} N > {place_force} N'
-                place_success = True
-                break
+            vel_cmd = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-            for i in range(3):
-                if abs(ft[i]) < force_dz:
-                    ft[i] = 0.0
+            if phase == 'DESCEND':
+                # Descend in -X (tool frame) until contact
+                vel_cmd[0] = ref_vx * 1000  # mm/s
+                if abs(ft[0]) > contact_force:
+                    self.get_logger().info(
+                        f'Contact detected! |Fx|={abs(ft[0]):.2f} N > {contact_force} N'
+                    )
+                    phase = 'SEARCH_Y'
+                    self.get_logger().info('Searching left (Y) for corner...')
 
-            vel = np.zeros(6)
-            vel[0:3] = linear_gain * ft[0:3]
-            vel *= compliant
-            vel[0] += ref_vx
+            elif phase == 'SEARCH_Y':
+                # Move left in +Y (tool frame), no X velocity
+                vel_cmd[1] = -search_speed * 1000  # mm/s
+                if abs(ft[1]) > corner_force:
+                    self.get_logger().info(
+                        f'Corner Y found! |Fy|={abs(ft[1]):.2f} N > {corner_force} N'
+                    )
+                    phase = 'SEARCH_Z'
+                    self.get_logger().info('Searching forward (Z) for corner...')
 
-            lin_speed = np.linalg.norm(vel[0:3])
-            if lin_speed > max_lin_vel:
-                vel[0:3] *= max_lin_vel / lin_speed
+            elif phase == 'SEARCH_Z':
+                # Move forward in +Z (tool frame), no X velocity
+                vel_cmd[2] = search_speed * 1000  # mm/s
+                if abs(ft[2]) > corner_force:
+                    # Read corner position
+                    code_c, pose_c = self._arm.get_position()
+                    if code_c == 0:
+                        corner_pose = pose_c
+                    self.get_logger().info(
+                        f'Corner Z found! |Fz|={abs(ft[2]):.2f} N > {corner_force} N'
+                    )
+                    self.get_logger().info(
+                        f'Corner position (mm): '
+                        f'X={corner_pose[0]:.2f}, Y={corner_pose[1]:.2f}, Z={corner_pose[2]:.2f}'
+                        if corner_pose else 'Failed to read position'
+                    )
+                    phase = 'DONE'
+                    reason = 'Corner found'
+                    break
 
+            # Check travel distance
             code, actual_pose = self._arm.get_position()
+            actual_travel = 0.0
             if code == 0:
                 actual_travel = np.linalg.norm(
                     np.array(actual_pose[0:3]) - np.array(start_pose[0:3])
                 ) / 1000.0
                 if actual_travel > max_dist:
-                    reason = f'Max distance: {actual_travel*1000:.1f} mm > {max_dist*1000:.0f} mm'
+                    reason = f'Max distance: {actual_travel*1000:.1f} mm'
                     break
 
-            vel_cmd = [vel[0]*1000, vel[1]*1000, vel[2]*1000, 0, 0, 0]
+            # Send velocity
             ret = self._arm.vc_set_cartesian_velocity(vel_cmd, is_tool_coord=True, duration=-1)
             if ret != 0:
                 self.get_logger().warn(f'vc_set ret={ret}')
@@ -442,12 +429,28 @@ class PickAndPlaceNode(Node):
                     reason = f'xArm error: {self._arm.error_code}'
                     break
 
+            # Log F/T data
+            raw_ft = self._ft_reader.get_ft()
+            px = actual_pose[0] if code == 0 else 0.0
+            py = actual_pose[1] if code == 0 else 0.0
+            pz = actual_pose[2] if code == 0 else 0.0
+            log_file.write(
+                f'{t_elapsed:.4f},'
+                f'{raw_ft[0]:.4f},{raw_ft[1]:.4f},{raw_ft[2]:.4f},'
+                f'{raw_ft[3]:.5f},{raw_ft[4]:.5f},{raw_ft[5]:.5f},'
+                f'{vel_cmd[0]:.2f},{vel_cmd[1]:.2f},{vel_cmd[2]:.2f},'
+                f'{actual_travel*1000:.1f},'
+                f'{px:.2f},{py:.2f},{pz:.2f},'
+                f'{phase}\n'
+            )
+            log_file.flush()
+
             cycle_count += 1
-            if cycle_count % int(rate * 2) == 0:
-                travel_mm = actual_travel * 1000.0 if code == 0 else -1
+            if cycle_count % int(rate) == 0:
                 self.get_logger().info(
-                    f'F/T: [{ft[0]:+6.2f}, {ft[1]:+6.2f}, {ft[2]:+6.2f}] N  '
-                    f'Travel: {travel_mm:.1f} mm'
+                    f'[{phase}] F:[{raw_ft[0]:+6.2f},{raw_ft[1]:+6.2f},{raw_ft[2]:+6.2f}] N  '
+                    f'T:[{raw_ft[3]:+6.3f},{raw_ft[4]:+6.3f},{raw_ft[5]:+6.3f}] Nm  '
+                    f'Pos:({px:.1f},{py:.1f},{pz:.1f})'
                 )
 
             elapsed = time.monotonic() - loop_start
@@ -455,29 +458,29 @@ class PickAndPlaceNode(Node):
                 time.sleep(dt - elapsed)
 
         self._arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0], is_tool_coord=True)
-        self.get_logger().info(f'Admittance stopped: {reason}')
-        return place_success, reason
+        log_file.close()
+        self.get_logger().info(f'Corner registration stopped: {reason}')
+        self.get_logger().info(f'F/T log saved to {log_path}')
+        return corner_pose is not None, reason, corner_pose
 
     def cleanup_admittance(self):
-        """Stop F/T reader and disconnect SDK."""
         if self._ft_reader:
             self._ft_reader.close()
             self._ft_reader = None
-
         if self._arm:
             try:
                 self._arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0], is_tool_coord=True)
                 time.sleep(0.3)
-                self._arm.set_state(4)  # STOP
+                self._arm.set_state(4)
                 time.sleep(0.5)
-                self._arm.set_collision_sensitivity(3)  # Re-enable collision detection
+                self._arm.set_collision_sensitivity(3)
                 self.get_logger().info(
                     f'SDK stopped: mode={self._arm.mode}, state={self._arm.state}'
                 )
                 self._arm.disconnect()
                 self.get_logger().info('SDK disconnected.')
             except Exception as e:
-                self.get_logger().warn(f'SDK cleanup error: {e}')
+                self.get_logger().warn(f'Cleanup error: {e}')
             self._arm = None
 
     def restart_ros2_control(self):
@@ -560,7 +563,6 @@ class PickAndPlaceNode(Node):
         self.get_logger().info('ros2_control_node restarted and controllers spawned.')
         time.sleep(2)
 
-        # Clean up temp file
         try:
             os.unlink(param_file.name)
         except OSError:
@@ -571,7 +573,7 @@ class PickAndPlaceNode(Node):
 
 def main():
     rclpy.init()
-    node = PickAndPlaceNode()
+    node = TestTorquePlacementNode()
 
     try:
         node.wait_for_services()
@@ -580,129 +582,199 @@ def main():
             node.get_logger().error('No world model — aborting')
             return
 
-        node.set_octomap_enabled(True)
-        # 1. Home
-        node.get_logger().info('========== Moving to home ==========')
-        if not node.move_pose('home'):
-            node.get_logger().error('Failed to move home')
-            return
-        
-        node.clear_octomap()
-        
-        time.sleep(0.5)
-        node.close_gripper()
-        time.sleep(0.5)
-
-        # 2. Hardcoded AprilTag pose for testing (skip exploration)
-        # TODO: Remove this and restore explore_for_tag() after testing
+        # Hardcoded tag pose (testing)
         tag_pose = {
             'position': {'x': -0.321512, 'y': 0.590565, 'z': 0.079846},
             'orientation': {'qx': -0.039334, 'qy': 0.706857, 'qz': -0.706159, 'qw': -0.012113},
         }
-        tag_j1 = 100.0  # approximate j1 angle facing the tag
-        node.get_logger().info('Using hardcoded tag pose (exploration skipped)')
 
-        # 3. Compute pick (stand 1) and place (stand 2) poses
+        # Compute poses
         H_pick = node.compute_pose_from_tag(tag_pose, node._H_TCP_stand1)
         H_place = node.compute_pose_from_tag(tag_pose, node._H_TCP_stand2)
-
-        px, py, pz, pqx, pqy, pqz, pqw = homogeneous_to_pos_quat(H_pick)
-        lx, ly, lz, lqx, lqy, lqz, lqw = homogeneous_to_pos_quat(H_place)
-        node.get_logger().info(f'Pick pose:  ({px:.4f}, {py:.4f}, {pz:.4f})')
-        node.get_logger().info(f'Place pose: ({lx:.4f}, {ly:.4f}, {lz:.4f})')
-
-        # Compute approach poses (pull back along tag Z to 5cm ahead of tag)
         H_tag = pose_to_homogeneous(tag_pose['position'], tag_pose['orientation'])
         H_approach_pick = node.compute_approach_pose(H_pick, H_tag)
         H_approach_place = node.compute_approach_pose(H_place, H_tag)
+
+        px, py, pz, pqx, pqy, pqz, pqw = homogeneous_to_pos_quat(H_pick)
+        lx, ly, lz, lqx, lqy, lqz, lqw = homogeneous_to_pos_quat(H_place)
         apx, apy, apz, apqx, apqy, apqz, apqw = homogeneous_to_pos_quat(H_approach_pick)
         alx, aly, alz, alqx, alqy, alqz, alqw = homogeneous_to_pos_quat(H_approach_place)
-        node.get_logger().info(f'Approach pick:  ({apx:.4f}, {apy:.4f}, {apz:.4f})')
-        node.get_logger().info(f'Approach place: ({alx:.4f}, {aly:.4f}, {alz:.4f})')
 
-        # 4. Approach → Pick from stand 1 → Approach → Home
+        node.get_logger().info(f'Pick:  ({px:.4f}, {py:.4f}, {pz:.4f})')
+        node.get_logger().info(f'Place: ({lx:.4f}, {ly:.4f}, {lz:.4f})')
+
+        # 1. Home
+        node.get_logger().info('========== Home ==========')
+        node.move_pose('home')
+        node.clear_octomap()
+        time.sleep(0.5)
+        node.close_gripper()
+        time.sleep(0.5)
+
+        # 2. Approach pick
         node.set_octomap_enabled(True)
-        node.get_logger().info('========== Approach (pick) ==========')
-        if not node.move_cartesian(apx, apy, apz+PRE_HEIGHT, apqx, apqy, apqz, apqw):
+        node.get_logger().info('========== Approach pick ==========')
+        if not node.move_cartesian(apx, apy, apz + PRE_HEIGHT, apqx, apqy, apqz, apqw):
             node.get_logger().error('Failed to reach pick approach')
             return
         time.sleep(0.5)
 
-        node.get_logger().info('========== Picking from stand 1 ==========')
-        if not node.execute_pick(H_pick, tag_j1):
-            node.get_logger().error('Pick failed. Aborting.')
+        # 3. Pick
+        node.get_logger().info('========== Pick ==========')
+        if not node.execute_pick(H_pick):
+            node.get_logger().error('Pick failed')
             return
 
-        node.get_logger().info('========== Retreat to approach (pick) ==========')
+        # 4. Retreat from pick → home
+        node.get_logger().info('========== Retreat pick ==========')
         node.set_octomap_enabled(False)
         node.move_cartesian(apx, apy, apz, apqx, apqy, apqz, apqw, keep_orientation=True)
         time.sleep(0.5)
 
-        # 5. Return to home
-        node.get_logger().info('========== Returning home ==========')
+        node.get_logger().info('========== Home ==========')
         node.move_pose('home')
         time.sleep(0.5)
 
+        # 5. Approach place — use offset position to intentionally hit a corner
+        # Offset x,y from TCP pose that lands near one corner of the stand
+        offset_x = 0.117472
+        offset_y = 0.778676
+        node.get_logger().info(
+            f'Using offset pre-place: x={offset_x:.4f}, y={offset_y:.4f} '
+            f'(normal: x={lx:.4f}, y={ly:.4f})'
+        )
+
         node.set_octomap_enabled(True)
-        # 6. Approach → Pre-place → Admittance place
-        node.get_logger().info('========== Approach (place) ==========')
-        if not node.move_cartesian(alx, aly, alz+PRE_HEIGHT, alqx, alqy, alqz, alqw):
+        node.get_logger().info('========== Approach place (offset) ==========')
+        if not node.move_cartesian(offset_x, offset_y, lz + PRE_HEIGHT,
+                                   lqx, lqy, lqz, lqw):
             node.get_logger().error('Failed to reach place approach')
             return
         time.sleep(0.5)
 
-        node.get_logger().info('========== Moving to pre-place ==========')
-        if not node.move_cartesian(lx, ly, lz + PRE_HEIGHT, lqx, lqy, lqz, lqw):
+        # 6. Pre-place at offset position
+        node.get_logger().info('========== Pre-place (offset) ==========')
+        if not node.move_cartesian(offset_x, offset_y, lz + PRE_HEIGHT,
+                                   lqx, lqy, lqz, lqw):
             node.get_logger().error('Failed to reach pre-place')
             return
         time.sleep(1.0)
 
         node.set_octomap_enabled(False)
-        # 7. Admittance-controlled placement at stand 2
-        node.get_logger().info('========== Admittance placement ==========')
-        success, reason = node.run_admittance_place()
 
-        if success:
-            node.get_logger().info(f'Plate seated! {reason}')
+        # 7. Admittance placement with F/T logging
+        log_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'logs'
+        )
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_path = os.path.join(log_dir, f'torque_placement_{timestamp}.csv')
+
+        node.get_logger().info('========== Corner registration ==========')
+        success, reason, corner_pose = node.run_admittance_place(log_path)
+
+        if success and corner_pose is not None:
+            node.get_logger().info(f'Corner found: {reason}')
+
+            # Switch SDK from velocity mode (5) to position mode (0)
+            node._arm.set_state(4)  # STOP
+            time.sleep(0.5)
+            node._arm.set_mode(0)   # Position mode
+            node._arm.set_state(0)  # START
+            time.sleep(0.5)
+            node.get_logger().info(
+                f'SDK position mode: mode={node._arm.mode}, state={node._arm.state}'
+            )
+
+            # Read current position from SDK (mm, degrees)
+            code, current_pose = node._arm.get_position()
+            if code != 0:
+                node.get_logger().error('Cannot read current position')
+                node.cleanup_admittance()
+                return
+            cx, cy, cz = current_pose[0], current_pose[1], current_pose[2]
+            node.get_logger().info(f'Current (mm): X={cx:.2f}, Y={cy:.2f}, Z={cz:.2f}')
+
+            # Corrected pose: lift 5mm, shift +2mm X, -2mm Y from current
+            corrected_x = cx - 5.0   # mm
+            corrected_y = cy + 5.0   # mm
+            corrected_z = cz + 5.0   # mm
+
+            node.get_logger().info(
+                f'Corrected (mm): X={corrected_x:.2f}, Y={corrected_y:.2f}, Z={corrected_z:.2f}'
+            )
+
+            # Move to corrected pose (lift + shift) — slow speed
+            node.get_logger().info('========== Moving to corrected pose ==========')
+            node._arm.set_position(
+                x=corrected_x, y=corrected_y, z=corrected_z,
+                roll=current_pose[3], pitch=current_pose[4], yaw=current_pose[5],
+                speed=5, wait=True
+            )
+            time.sleep(0.3)
+
+            # Verify X/Y are within 0.5mm, keep correcting if not
+            xy_tol = 0.5  # mm
+            max_corrections = 10
+            for i in range(max_corrections):
+                code_v, verify_pose = node._arm.get_position()
+                if code_v != 0:
+                    break
+                dx = corrected_x - verify_pose[0]
+                dy = corrected_y - verify_pose[1]
+                node.get_logger().info(
+                    f'Correction check {i+1}: dx={dx:+.2f} mm, dy={dy:+.2f} mm'
+                )
+                if abs(dx) < xy_tol and abs(dy) < xy_tol:
+                    node.get_logger().info('Position within tolerance.')
+                    break
+                node._arm.set_position(
+                    x=corrected_x, y=corrected_y, z=corrected_z,
+                    roll=current_pose[3], pitch=current_pose[4], yaw=current_pose[5],
+                    speed=5, wait=True
+                )
+                time.sleep(0.3)
+
+            # Descend using velocity mode with F/T force stop
+            node.get_logger().info('========== Descending with force control ==========')
+            node._arm.set_state(4)  # STOP
+            time.sleep(0.3)
+            node._arm.set_mode(XARM_MODE_CART_VELOCITY)
+            node._arm.set_state(XARM_STATE_START)
+            time.sleep(0.3)
+
+            # Re-bias F/T sensor before descent
+            node._ft_reader.bias()
+            time.sleep(0.2)
+
+            descent_speed = -5.0  # mm/s (tool -X)
+            place_force = 5.0  # N
+            while rclpy.ok():
+                ft = node._ft_reader.get_ft()
+                if abs(ft[0]) > place_force:
+                    node.get_logger().info(
+                        f'Plate seated! |Fx|={abs(ft[0]):.2f} N > {place_force} N'
+                    )
+                    break
+                node._arm.vc_set_cartesian_velocity(
+                    [descent_speed, 0, 0, 0, 0, 0], is_tool_coord=True, duration=-1
+                )
+                time.sleep(0.01)
+
+            node._arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0], is_tool_coord=True)
+            time.sleep(0.5)
         else:
-            node.get_logger().warn(f'Placement incomplete: {reason}')
+            node.get_logger().warn(f'Corner registration INCOMPLETE: {reason}')
 
-        # 9. Open gripper to release plate
-        node.get_logger().info('========== Releasing plate ==========')
-        node.open_gripper()
-        time.sleep(0.5)
-
-        # 8. Cleanup SDK and restart ros2_control_node
-        node.get_logger().info('========== Recovering controllers ==========')
         node.cleanup_admittance()
-        if not node.restart_ros2_control():
-            node.get_logger().error('Failed to restart ros2_control — cannot continue')
-            return
 
-        # Wait for motion planner services to reconnect after restart
-        node.get_logger().info('Waiting for services after restart...')
-        node.wait_for_services(timeout=30.0)
-        time.sleep(1.0)
-
-        # 10. Retract to pre-place → approach → home
-        node.get_logger().info('========== Retracting to pre-place ==========')
-        node.move_cartesian(lx, ly, lz + PRE_HEIGHT, lqx, lqy, lqz, lqw)
+        # 8. Open gripper
+        node.get_logger().info('========== Release plate ==========')
+        # node.open_gripper()
         time.sleep(0.5)
-
-        node.set_octomap_enabled(True)
-
-        node.get_logger().info('========== Retreat to approach (place) ==========')
-        node.move_cartesian(alx, aly, alz, alqx, alqy, alqz, alqw)
-        time.sleep(0.5)
-
-        # 11. Home
-        node.get_logger().info('========== Returning home ==========')
-        node.move_pose('home')
-
-        node.get_logger().info('========== Pick and place complete ==========')
 
     except KeyboardInterrupt:
-        node.get_logger().info('Interrupted by user')
+        node.get_logger().info('Interrupted')
         node.cleanup_admittance()
     finally:
         node.destroy_node()

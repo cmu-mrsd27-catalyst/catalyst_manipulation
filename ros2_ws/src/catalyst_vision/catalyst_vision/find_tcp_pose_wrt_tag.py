@@ -27,18 +27,18 @@ def pose_to_H(position, quat):
 
 
 # --- AprilTag pose in link_base (tag_liquid_handler, id=14) ---
-tag_pos = [-0.378327, 0.597876, 0.075848]
-tag_quat = [-0.025559, 0.711576, -0.702049, -0.011541]  # qx, qy, qz, qw
+tag_pos = [-0.321512, 0.590565, 0.079846]
+tag_quat = [-0.039334, 0.706857, -0.706159, -0.012113]  # qx, qy, qz, qw
 
 H_tag_base = pose_to_H(tag_pos, tag_quat)
 
 # --- Stand 1: TCP (gripper) pick/place pose in link_base ---
-tcp1_pos = [-0.121968, 0.792721, 0.089596]
-tcp1_quat = [0.71738, 0.696448, -0.008139, 0.016101]  # qx, qy, qz, qw
+tcp1_pos = [-0.0694, 0.791959, 0.087037]
+tcp1_quat = [0.694982, 0.719022, 0.0007, -0.00241]  # qx, qy, qz, qw
 
 # --- Stand 2: TCP (gripper) pick/place pose in link_base ---
-tcp2_pos = [0.037577, 0.789782, 0.091233]
-tcp2_quat = [0.711214, 0.702954, 0.001555, -0.005395]  # qx, qy, qz, qw
+tcp2_pos = [0.094662, 0.795717, 0.091159]
+tcp2_quat = [0.694736, 0.718877, 0.00916, -0.02177]  # qx, qy, qz, qw
 
 H_tcp1_base = pose_to_H(tcp1_pos, tcp1_quat)
 H_tcp2_base = pose_to_H(tcp2_pos, tcp2_quat)

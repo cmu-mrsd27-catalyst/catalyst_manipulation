@@ -29,6 +29,9 @@ setup(
             'sdk_admittance = catalyst_execute.sdk_admittance:main',
             'test_place_admittance = catalyst_execute.test_place_admittance:main',
             'pick_and_place = catalyst_execute.pick_and_place:main',
+            'test_torque_placement = catalyst_execute.test_torque_placement:main',
+            'plot_torque_placement = catalyst_execute.plot_torque_placement:main',
+            'ft_data_collection = catalyst_execute.ft_data_collection:main',
         ],
     },
 )

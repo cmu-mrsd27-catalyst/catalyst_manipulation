@@ -28,6 +28,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'pointcloud_filter = catalyst_vision.pointcloud_filter:main',
         ],
     },
 )
