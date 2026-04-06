@@ -1,0 +1,101 @@
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <!-- ============================================================
+       Pick and Place — High-Level Behavior Tree
+
+       Action servers handle the full sub-sequences internally:
+         /pick    — approach, open gripper, descend, guide mode, close, retract
+         /place   — approach, SDK connect, corner reg, force descent, release, cleanup, retract
+         /explore — sweep joint1 looking for AprilTag
+
+       This tree handles task-level orchestration and error recovery.
+       ============================================================ -->
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="pick_and_place">
+
+      <!-- ===== Initialize ===== -->
+      <SubTree ID="Initialize"/>
+
+      <!-- ===== Explore for AprilTag =====
+           TODO: Uncomment when using live AprilTag detection.
+           The result contains tag_pose which can be passed to Pick/Place
+           via the blackboard.
+
+      <TaskAction name="Explore"
+        action_name="/explore"
+        command='{"tag_frame": "tag_liquid_handler"}'
+        result="{explore_result}"
+        timeout_sec="120"/>
+      -->
+
+      <!-- ===== Pre-pick checks =====
+           TODO: Verify wellplate is present at pick location before picking.
+           Prevents picking from an empty stand.
+
+      <Condition ID="WellplatePresent" .../>
+      -->
+
+      <!-- ===== Pick from stand ===== -->
+      <TaskAction name="Pick"
+        action_name="/pick"
+        command='{"tag_pose": {"position": {"x": -0.321512, "y": 0.590565, "z": 0.079846}, "orientation": {"qx": -0.039334, "qy": 0.706857, "qz": -0.706159, "qw": -0.012113}}, "use_guide_mode": true}'
+        timeout_sec="300"/>
+
+      <!-- ===== Transit home ===== -->
+      <JsonService name="HomeAfterPick"
+        service_name="/joint_command"
+        command='{"pose": "home", "speed": 0.1}'/>
+
+      <!-- ===== Pre-place checks =====
+           TODO: Verify the target stand is empty before placing.
+           Prevents placing on top of an existing wellplate.
+
+      <Condition ID="PlaceLocationEmpty" .../>
+      -->
+
+      <!-- ===== Place on stand ===== -->
+      <TaskAction name="Place"
+        action_name="/place"
+        command='{"tag_pose": {"position": {"x": -0.321512, "y": 0.590565, "z": 0.079846}, "orientation": {"qx": -0.039334, "qy": 0.706857, "qz": -0.706159, "qw": -0.012113}}}'
+        timeout_sec="300"/>
+
+      <!-- ===== Post-place verification =====
+           TODO: Check that the wellplate was placed correctly
+           (e.g. vision check, force verification).
+           If failed, could trigger a re-pick or alert.
+
+      <Condition ID="PlacementVerified" .../>
+      -->
+
+      <!-- ===== Home ===== -->
+      <JsonService name="HomeFinal"
+        service_name="/joint_command"
+        command='{"pose": "home", "speed": 0.1}'/>
+
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ============================================================
+       Initialize: octomap on, home, clear octomap, close gripper
+       ============================================================ -->
+  <BehaviorTree ID="Initialize">
+    <Sequence name="init">
+      <SetBoolService name="OctomapOn"
+        service_name="/set_octomap_enabled" value="true"/>
+      <JsonService name="Home"
+        service_name="/joint_command"
+        command='{"pose": "home", "speed": 0.1}'/>
+      <EmptyService name="ClearOctomap"
+        service_name="/clear_octomap"/>
+      <Delay delay_msec="500">
+        <ForceSuccess>
+          <JsonService name="CloseGripper"
+            service_name="/gripper_command"
+            command='{"action": "close"}'/>
+        </ForceSuccess>
+      </Delay>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

@@ -32,6 +32,13 @@ setup(
             'test_torque_placement = catalyst_execute.test_torque_placement:main',
             'plot_torque_placement = catalyst_execute.plot_torque_placement:main',
             'ft_data_collection = catalyst_execute.ft_data_collection:main',
+            'sdk_control_service = catalyst_execute.services.sdk_control_service:main',
+            'explore_tag_service = catalyst_execute.services.explore_tag_service:main',
+            'test_modularization = catalyst_execute.test_modularization:main',
+            'compute_poses_service = catalyst_execute.services.compute_poses_service:main',
+            'pick_action_server = catalyst_execute.actions.pick_action_server:main',
+            'place_action_server = catalyst_execute.actions.place_action_server:main',
+            'explore_action_server = catalyst_execute.actions.explore_action_server:main',
         ],
     },
 )

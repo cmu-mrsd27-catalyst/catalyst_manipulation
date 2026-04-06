@@ -1,0 +1,8 @@
+# Goal - JSON command string (parsed by the action server)
+string command
+---
+# Result - JSON response string
+string response
+---
+# Feedback - JSON feedback string (phase, progress, message)
+string feedback

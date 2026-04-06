@@ -3,7 +3,7 @@ FROM osrf/ros:jazzy-desktop
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install basic development tools
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y \
     libyaml-cpp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install MoveIt 2 (including perception/OctoMap for 3D obstacle avoidance)
-RUN apt-get update && apt-get install -y \
+# Install ROS 2 packages (MoveIt, Gazebo, BehaviorTree, etc.) in one layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-moveit \
     ros-jazzy-moveit-setup-assistant \
     ros-jazzy-moveit-visual-tools \
@@ -32,51 +32,40 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-ros2controlcli \
     ros-jazzy-octomap \
     ros-jazzy-octomap-msgs \
+    ros-jazzy-behaviortree-cpp \
     ros-jazzy-asio-cmake-module \
+    ros-jazzy-ros-gz \
+    ros-jazzy-gz-ros2-control \
+    ros-jazzy-apriltag-msgs \
     libasio-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Gazebo Harmonic + ROS 2 bridge + ros2_control plugin
-RUN apt-get update && apt-get install -y \
-    ros-jazzy-ros-gz \
-    ros-jazzy-gz-ros2-control \
+# Install Intel RealSense SDK (Using direct keyserver fetch to avoid bad Intel .pgp files)
+RUN apt-get update && apt-get install -y --no-install-recommends curl gpg ca-certificates \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xFB0B24895113F120" \
+       | gpg --dearmor -o /etc/apt/keyrings/librealsense.gpg \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/librealsense.gpg] https://librealsense.intel.com/Debian/apt-repo noble main" \
+       > /etc/apt/sources.list.d/librealsense.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       librealsense2-dev \
+       librealsense2-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /root/ros2_ws/src
 WORKDIR /root/ros2_ws
 
-# Copy your src folder from the host to the image
-# This allows rosdep to "see" your package.xml files during build
+# Copy source and install rosdep dependencies
 COPY ./ros2_ws/src /root/ros2_ws/src
 
-# Initialize rosdep (only needed once in the image life)
-# Then install dependencies defined in your package.xml files
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 RUN rosdep update && \
     apt-get update && \
     rosdep install --from-paths src --ignore-src -y -r && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Intel RealSense SDK
-RUN apt-get update && apt-get install -y software-properties-common \
-    && apt-key adv --keyserver keyserver.ubuntu.com --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE \
-    && add-apt-repository "deb https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" \
-    && apt-get update && apt-get install -y \
-    librealsense2-dev \
-    librealsense2-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install apriltag dependencies
-RUN apt-get update && apt-get install -y \
-    ros-jazzy-apriltag-msgs \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install Python dependencies
-RUN pip3 install --break-system-packages dynamixel-sdk xarm-python-sdk
-
-# # Setup workspace directory
-# RUN mkdir -p /root/ros2_ws/src
-# WORKDIR /root/ros2_ws
+RUN pip3 install --break-system-packages dynamixel-sdk xarm-python-sdk requests
 
 # Source ROS 2 setup in bashrc
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
