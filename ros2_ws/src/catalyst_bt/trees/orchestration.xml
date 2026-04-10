@@ -4,6 +4,8 @@
     Task trees are selected at runtime via /bt_execute (JsonCommand).
     Explore runs once per service call; tag_pose comes from explore result (blackboard explore_result).
 
+    *WithDetect* trees insert /detect_well_plate after Explore (GPU server + detect_well_plate_action_server).
+
     Octomap on/clear: owned by pick/place action servers only (not in InitMinimal).
   -->
 
@@ -39,6 +41,34 @@
     </ReactiveSequence>
   </BehaviorTree>
 
+  <!-- ========== pick_only with well-plate vision (GPU server) ========== -->
+  <BehaviorTree ID="MainPickOnlyWithDetect">
+    <ReactiveSequence name="safe_pick_only_with_detect">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="DetectWellPlate"
+          action_name="/detect_well_plate"
+          command='{"require":"pick_safe"}'
+          overrides="{explore_result}"
+          timeout_sec="180"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
   <!-- ========== place_only ========== -->
   <BehaviorTree ID="MainPlaceOnly">
     <ReactiveSequence name="safe_place_only">
@@ -50,6 +80,34 @@
           command='{"tag_frame": "tag_liquid_handler"}'
           result="{explore_result}"
           timeout_sec="120"/>
+        <TaskAction name="Place"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== place_only with well-plate vision ========== -->
+  <BehaviorTree ID="MainPlaceOnlyWithDetect">
+    <ReactiveSequence name="safe_place_only_with_detect">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="DetectWellPlate"
+          action_name="/detect_well_plate"
+          command='{"require":"place_safe"}'
+          overrides="{explore_result}"
+          timeout_sec="180"/>
         <TaskAction name="Place"
           action_name="/place"
           command='{}'
@@ -90,6 +148,39 @@
     </ReactiveSequence>
   </BehaviorTree>
 
+  <!-- ========== pick_place with single vision check (both stands) ========== -->
+  <BehaviorTree ID="MainPickPlaceWithDetect">
+    <ReactiveSequence name="safe_pick_place_with_detect">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="DetectWellPlate"
+          action_name="/detect_well_plate"
+          command='{"require":"both"}'
+          overrides="{explore_result}"
+          timeout_sec="180"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <TaskAction name="Place"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
   <!-- ========== place_pick (one explore, place then pick, then home) ========== -->
   <BehaviorTree ID="MainPlacePick">
     <ReactiveSequence name="safe_place_pick">
@@ -101,6 +192,39 @@
           command='{"tag_frame": "tag_liquid_handler"}'
           result="{explore_result}"
           timeout_sec="120"/>
+        <TaskAction name="Place"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== place_pick with vision (both stands before place) ========== -->
+  <BehaviorTree ID="MainPlacePickWithDetect">
+    <ReactiveSequence name="safe_place_pick_with_detect">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="DetectWellPlate"
+          action_name="/detect_well_plate"
+          command='{"require":"both"}'
+          overrides="{explore_result}"
+          timeout_sec="180"/>
         <TaskAction name="Place"
           action_name="/place"
           command='{}'

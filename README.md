@@ -64,6 +64,12 @@ ros2 run catalyst_execute explore_action_server
 ```
 
 ```bash
+ros2 run catalyst_execute detect_well_plate_action_server
+```
+
+Runs **`/detect_well_plate`**: move to a tag-calibrated inspection pose, grab a camera frame, POST to the remote GPU FastAPI server (`detect_well_plate_action_server` in `catalyst_execute_params.yaml`). Requires a color image topic (e.g. RealSense) and a reachable `server_url`.
+
+```bash
 ros2 run catalyst_execute pick_action_server
 ```
 
@@ -85,6 +91,9 @@ ros2 run catalyst_execute pick_from_robot_container_action_server
 |--------|-------------------|------|
 | Place on robot | `/place_on_robot` | Transit (`down_right` → pre-place) → SDK place → retract → same `down_right` → home |
 | Pick from robot container | `/pick_from_robot_container` | Transit (`down_right` → pre-pick) → grasp → retract → same `down_right` → home |
+| Well-plate detect | `/detect_well_plate` | Cartesian to calibrated view → HTTP detect → `pick_safe` / `place_safe` (optional `require` in goal) |
+
+**Where does “home” run?** In the default orchestration trees, **joint home is owned by the behavior tree** (`InitMinimal` at the start of a task, `HomeEnd` after pick/place). The pick/place **action servers** do not send the arm home on success; they stop at approach/retract poses so the next BT node or a manual move can run.
 
 ### 4. Behavior tree executor
 
@@ -111,8 +120,12 @@ ros2 service call /bt_execute catalyst_interfaces/srv/JsonCommand \
 | `place_pick` | `MainPlacePick` | Place then pick |
 | `pick_then_place_on_robot` | `MainPickThenPlaceOnRobot` | Pick from workpiece, then place into robot-side container |
 | `pick_from_robot_container` | `MainPickFromRobotContainer` | Pick from robot-side container |
+| `pick_only_with_detect` | `MainPickOnlyWithDetect` | Explore → detect (`require: pick_safe`) → pick → home |
+| `place_only_with_detect` | `MainPlaceOnlyWithDetect` | Explore → detect (`require: place_safe`) → place → home |
+| `pick_place_with_detect` | `MainPickPlaceWithDetect` | Explore → detect (`require: both`) → pick → place → home |
+| `place_pick_with_detect` | `MainPlacePickWithDetect` | Explore → detect (`require: both`) → place → pick → home |
 
-Requires the corresponding action servers to be running (including `/place_on_robot` and `/pick_from_robot_container` for the last two rows).
+Requires the corresponding action servers to be running (including `/place_on_robot` and `/pick_from_robot_container` for the last two rows). Vision tasks also need **`detect_well_plate_action_server`**, camera streaming, and the GPU detection HTTP server.
 
 ---
 

@@ -89,13 +89,20 @@ int main(int argc, char** argv)
                 {"place_pick", "MainPlacePick"},
                 {"pick_then_place_on_robot", "MainPickThenPlaceOnRobot"},
                 {"pick_from_robot_container", "MainPickFromRobotContainer"},
+                {"pick_only_with_detect", "MainPickOnlyWithDetect"},
+                {"place_only_with_detect", "MainPlaceOnlyWithDetect"},
+                {"pick_place_with_detect", "MainPickPlaceWithDetect"},
+                {"place_pick_with_detect", "MainPlacePickWithDetect"},
             };
 
             auto it = k_task_to_tree.find(task);
             if (it == k_task_to_tree.end()) {
                 resp->response = json{
                     {"success", false},
-                    {"message", "Unknown task. Use: pick_only | place_only | pick_place | place_pick | pick_then_place_on_robot | pick_from_robot_container"},
+                    {"message", "Unknown task. Use: pick_only | place_only | pick_place | place_pick | "
+                                "pick_then_place_on_robot | pick_from_robot_container | "
+                                "pick_only_with_detect | place_only_with_detect | pick_place_with_detect | "
+                                "place_pick_with_detect"},
                     {"task", task},
                 }.dump();
                 return;

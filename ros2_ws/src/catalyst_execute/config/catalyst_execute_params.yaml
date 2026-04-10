@@ -134,23 +134,23 @@ robot_container_place_action_server:
     speed: 0.1
   # pre_place: TCP 5 cm above place_container (link_base), after down_right
   pre_place:
-    x: 0.169574
-    y: 0.09149
-    z: 0.131231
-    qx: 0.706609
-    qy: 0.707579
-    qz: 0.005009
-    qw: -0.003106
+    x: 0.17513
+    y: 0.018705
+    z: 0.129163
+    qx: 0.705947
+    qy: 0.707857
+    qz: 0.022498
+    qw: 0.008389
     speed: 0.1
   # place_container TCP (nominal); descent is SDK admittance from pre_place
   place_container:
-    x: 0.169574
-    y: 0.09149
-    z: 0.081231
-    qx: 0.706609
-    qy: 0.707579
-    qz: 0.005009
-    qw: -0.003106
+    x: 0.17513
+    y: 0.018705
+    z: 0.079163
+    qx: 0.705947
+    qy: 0.707857
+    qz: 0.022498
+    qw: 0.008389
     speed: 0.05
   default_contact_force_threshold: 1.0
   default_corner_force_threshold: 1.0
@@ -188,7 +188,7 @@ robot_container_place_action_server:
   workspace_box_remove_verify_pause_sec: 0.3
   workspace_box_restore_collision:
     frame_id: link_base
-    position: [0.175, 0.075, 0.04]
+    position: [0.175, 0.0, 0.04]
     orientation: [0.0, 0.0, 0.0, 1.0]
     dimensions: [0.14, 0.10, 0.08]
 
@@ -218,22 +218,22 @@ robot_container_pick_action_server:
     speed: 0.1
   # Match robot_container_place pre_place / place_container (pick is inverse motion)
   pre_pick:
-    x: 0.169574
-    y: 0.09149
-    z: 0.131231
-    qx: 0.706609
-    qy: 0.707579
-    qz: 0.005009
-    qw: -0.003106
+    x: 0.17513
+    y: 0.018705
+    z: 0.129163
+    qx: 0.705947
+    qy: 0.707857
+    qz: 0.022498
+    qw: 0.008389
     speed: 0.1
   pick_pose:
-    x: 0.169574
-    y: 0.09149
-    z: 0.081231
-    qx: 0.706609
-    qy: 0.707579
-    qz: 0.005009
-    qw: -0.003106
+    x: 0.17513
+    y: 0.018705
+    z: 0.079163
+    qx: 0.705947
+    qy: 0.707857
+    qz: 0.022498
+    qw: 0.008389
     speed: 0.05
   workspace_collision_object_id: "workspace_box"
   # Verified via /scene_command list after each remove
@@ -242,7 +242,7 @@ robot_container_pick_action_server:
   # Removed from scene after pre_pick, re-added after retract (sync with planning_scene_static_objects.yaml)
   workspace_box_restore_collision:
     frame_id: link_base
-    position: [0.175, 0.075, 0.04]
+    position: [0.175, 0.0, 0.04]
     orientation: [0.0, 0.0, 0.0, 1.0]
     dimensions: [0.14, 0.10, 0.08]
 
@@ -270,3 +270,26 @@ explore_action_server:
       qy: -0.441784
       qz: 0.896861
       qw: 0.009113
+
+# Well-plate vision: TCP viewpoint calibrated from tag (see detect_well_plate_action_server).
+detect_well_plate_action_server:
+  action_name: "/detect_well_plate"
+  robot_phase_topic: "/robot_phase"
+  phase_pub_queue_size: 10
+  camera_topic: "/camera/camera/color/image_raw"
+  # GPU FastAPI server (e.g. Tailscale IP)
+  server_url: "http://100.80.78.24:8000"
+  http_timeout_sec: 120.0
+  move_cartesian_timeout_sec: 60.0
+  start_settle_sec: 0.8
+  motion_settle_sec: 0.5
+  fresh_image_wait_sec: 3.0
+  default_move_speed: 0.1
+  jpeg_quality: 90
+  # One-time calibration: TCP and tag 14 (tag_liquid_handler) in link_base at detection pose
+  calibration_tcp_pose:
+    position: {x: -0.035497, y: 0.43645, z: 0.301366}
+    orientation: {qx: 0.655669, qy: 0.70791, qz: -0.184235, qw: 0.187131}
+  calibration_tag_pose_in_base:
+    position: {x: -0.093325, y: 0.517196, z: 0.025785}
+    orientation: {qx: 0.027407, qy: -0.442977, qz: 0.896113, qw: 0.001158}
