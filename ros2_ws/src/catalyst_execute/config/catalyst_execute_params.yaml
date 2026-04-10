@@ -38,8 +38,8 @@ service_clients:
 compute_poses:
   service_name: "/compute_poses"
   gripper_pose_file: "gripper_pose.json"
-  # Extra shift to pick TCP pose in link_base Z (m); 0 = use tag-derived pose only
-  pick_grasp_offset_z_m: 0.0
+  # Extra shift to pick TCP pose in link_base Z (m); negative = lower toward -Z in base
+  pick_grasp_offset_z_m: -0.007
   # approach y = tag_y + offset (m); x,z,quat match pick/place; z also +pre_height like pre_pick/pre_place
   approach_tag_y_offset_m: -0.05
   pre_height: 0.05
@@ -47,11 +47,11 @@ compute_poses:
   pre_place_planar_offset_x_m: 0.015
   pre_place_planar_offset_y_m: -0.015
   correction_dx: -3.0
-  correction_dy: 5.0
+  correction_dy: 3.0
   correction_dz: 5.0
   default_cartesian_speed: 0.1
   position_move_speed: 5
-  position_move_tolerance: 0.5
+  position_move_tolerance: 0.1
 
 exploration:
   # Start pose before joint1 sweep (deg). Rad: [1.777192, -1.115486, -0.336843, 3.073123, -0.760977, 3.295532]
@@ -108,6 +108,12 @@ place_action_server:
   sleep_after_release_sec: 0.5
   sleep_after_restart_sec: 1.0
   corner_registration_max_distance: 0.1
+  # After release: SDK +Z lift (mm, base frame) before MoveIt restart; then approach + joint home
+  sdk_post_release_z_lift_mm: 50.0
+  sdk_pre_place_retract_speed_mm_s: 30.0
+  sdk_pre_place_retract_tolerance_mm: 1.0
+  sdk_pre_place_retract_timeout_sec: 120.0
+  joint_home_speed: 0.1
 
 # Robot-side container (hardcoded link_base poses; see test_container_place.py)
 robot_container_place_action_server:

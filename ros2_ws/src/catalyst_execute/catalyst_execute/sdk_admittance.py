@@ -109,6 +109,9 @@ class OnRobotFTReader:
                         self._ft = ft
             except socket.timeout:
                 continue
+            except OSError:
+                # Socket shut down from stop() / close()
+                break
 
     def get_ft(self) -> np.ndarray:
         """Get latest [Fx,Fy,Fz,Tx,Ty,Tz] reading."""
@@ -121,18 +124,29 @@ class OnRobotFTReader:
         time.sleep(0.5)
 
     def stop(self):
-        """Stop streaming."""
+        """Stop streaming and unblock the reader thread."""
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=2.0)
+        th = self._thread
         try:
             self.sock.send(self._pack_command(RDT_CMD_STOP))
         except OSError:
             pass
+        if th is not None and th.is_alive():
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            th.join(timeout=3.0)
 
     def close(self):
         self.stop()
-        self.sock.close()
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+        self._thread = None
 
 
 class SdkAdmittanceNode(Node):

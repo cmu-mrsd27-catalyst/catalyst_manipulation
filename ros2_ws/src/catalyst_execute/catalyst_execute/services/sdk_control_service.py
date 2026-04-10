@@ -19,6 +19,7 @@ Usage:
 """
 
 import json
+import os
 import time
 
 import numpy as np
@@ -26,6 +27,7 @@ import rclpy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rcl_interfaces.srv import GetParameters
 
 from catalyst_interfaces.srv import JsonCommand
 from xarm.wrapper import XArmAPI
@@ -58,6 +60,11 @@ class SdkControlService(Node):
         self._ft_reader = None
 
         self._cb_group = ReentrantCallbackGroup()
+        # One client for the whole process — restart_ros2_control uses it each place.
+        self._robot_description_client = self.create_client(
+            GetParameters, '/robot_state_publisher/get_parameters',
+            callback_group=self._cb_group,
+        )
         self.create_service(
             JsonCommand, self._sdk_service_name, self._handle_request,
             callback_group=self._cb_group,
@@ -111,6 +118,11 @@ class SdkControlService(Node):
             robot_ip (optional): override node parameter
             ft_sensor_ip (optional): override node parameter
         """
+        if self._arm is not None or self._ft_reader is not None:
+            self.get_logger().warn(
+                'Stale SDK/F-T session before connect — running cleanup first')
+            self._handle_cleanup({})
+
         robot_ip = cmd.get('robot_ip', self.get_parameter('robot_ip').value)
         ft_ip = cmd.get('ft_sensor_ip', self.get_parameter('ft_sensor_ip').value)
 
@@ -333,7 +345,8 @@ class SdkControlService(Node):
 
     def _handle_restart_controllers(self, cmd):
         """Restart ros2_control_node and re-spawn controllers."""
-        success = restart_ros2_control(self, self.get_logger())
+        success = restart_ros2_control(
+            self, self.get_logger(), self._robot_description_client)
         if success:
             return {'success': True, 'message': 'Controllers restarted'}
         return {'success': False, 'message': 'Controller restart failed'}
@@ -616,7 +629,8 @@ class SdkControlService(Node):
 def main():
     rclpy.init()
     node = SdkControlService()
-    executor = MultiThreadedExecutor()
+    n_threads = max(8, (os.cpu_count() or 4) * 2)
+    executor = MultiThreadedExecutor(num_threads=n_threads)
     executor.add_node(node)
 
     try:

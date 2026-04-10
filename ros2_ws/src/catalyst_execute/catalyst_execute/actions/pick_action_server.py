@@ -31,6 +31,7 @@ Usage:
 """
 
 import json
+import os
 import time
 
 import rclpy
@@ -374,7 +375,8 @@ class PickActionServer(Node):
 def main():
     rclpy.init()
     node = PickActionServer()
-    executor = MultiThreadedExecutor()
+    n_threads = max(8, (os.cpu_count() or 4) * 2)
+    executor = MultiThreadedExecutor(num_threads=n_threads)
     executor.add_node(node)
     try:
         executor.spin()

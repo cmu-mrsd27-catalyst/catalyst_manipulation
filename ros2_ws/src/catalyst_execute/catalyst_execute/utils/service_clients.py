@@ -7,6 +7,7 @@ service response callbacks can be processed while the caller blocks.
 """
 
 import json
+import threading
 import time
 
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -15,6 +16,26 @@ from std_srvs.srv import Empty, SetBool
 
 from catalyst_interfaces.srv import JsonCommand
 from catalyst_execute.utils.execute_config import section
+
+
+def _wait_ros_client_future(future, timeout_sec):
+    """Block until *future* completes without a busy spin loop.
+
+    Uses threading.Event + add_done_callback so the waiter yields until the
+    executor delivers the response (works with MultiThreadedExecutor on the
+    same node).
+    """
+    if future.done():
+        return True
+    done = threading.Event()
+
+    def _on_done(_fut):
+        done.set()
+
+    future.add_done_callback(_on_done)
+    if future.done():
+        return True
+    return done.wait(timeout=timeout_sec)
 
 
 class RobotServiceClients:
@@ -100,12 +121,9 @@ class RobotServiceClients:
         self._log.info(f'-> {client.srv_name}: {req.command[:200]}')
 
         future = client.call_async(req)
-        start = time.time()
-        while not future.done():
-            if time.time() - start > timeout:
-                self._log.error(f'Timeout calling {client.srv_name}')
-                return {'success': False, 'message': 'Service call timeout'}
-            time.sleep(0.01)
+        if not _wait_ros_client_future(future, timeout):
+            self._log.error(f'Timeout calling {client.srv_name}')
+            return {'success': False, 'message': 'Service call timeout'}
 
         if future.result() is None:
             return {'success': False, 'message': 'Service call returned None'}
@@ -148,12 +166,9 @@ class RobotServiceClients:
         req = SetBool.Request()
         req.data = enabled
         future = self._set_octomap.call_async(req)
-        start = time.time()
-        while not future.done():
-            if time.time() - start > 10.0:
-                self._log.error('Timeout setting octomap')
-                return False
-            time.sleep(0.01)
+        if not _wait_ros_client_future(future, 10.0):
+            self._log.error('Timeout setting octomap')
+            return False
         result = future.result()
         if result is None:
             self._log.error('set_octomap_enabled: service returned None')
@@ -186,11 +201,8 @@ class RobotServiceClients:
 
     def clear_octomap(self):
         future = self._clear_octomap.call_async(Empty.Request())
-        start = time.time()
-        while not future.done():
-            if time.time() - start > 10.0:
-                return False
-            time.sleep(0.01)
+        if not _wait_ros_client_future(future, 10.0):
+            return False
         return True
 
     def allow_object_default_collisions(self, object_id, allow, timeout=None):

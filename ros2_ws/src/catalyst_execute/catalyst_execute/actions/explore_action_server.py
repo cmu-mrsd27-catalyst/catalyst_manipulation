@@ -29,6 +29,7 @@ Usage:
 """
 
 import json
+import os
 
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -208,7 +209,10 @@ class ExploreActionServer(Node):
 def main():
     rclpy.init()
     node = ExploreActionServer()
-    executor = MultiThreadedExecutor()
+    # Enough threads to run action server tasks, subscriptions, and service clients
+    # concurrently while TagExplorer waits without nested spin_* (see exploration.py).
+    n_threads = max(8, (os.cpu_count() or 4) * 2)
+    executor = MultiThreadedExecutor(num_threads=n_threads)
     executor.add_node(node)
     try:
         executor.spin()

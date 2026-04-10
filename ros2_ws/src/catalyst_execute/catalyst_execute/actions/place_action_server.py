@@ -10,10 +10,12 @@ Handles the full place sequence:
   6. Position correction (SDK position move)
   7. Force descent (velocity control with F/T)
   8. Open gripper — release object
-  9. SDK cleanup + restart ros2_control controllers
-  10. Retract to pre-place → approach (octomap on)
+  9. SDK position move +Z (clear vertically; default 50 mm) while still on SDK
+  10. SDK cleanup + restart ros2_control controllers
+  11. MoveIt cartesian to approach_place_offset_pre (octomap on), then joint home
 
-Leaves the arm at the approach_place pose.
+Leaves the arm at home. Failure recovery still uses a two-step retract
+(pre_place_offset → approach_place_offset_pre) without the SDK Z lift.
 
 Goal (JSON):
   tag_pose: {position: {x,y,z}, orientation: {qx,qy,qz,qw}}
@@ -35,6 +37,7 @@ Usage:
 """
 
 import json
+import os
 import time
 
 import rclpy
@@ -45,6 +48,9 @@ from rclpy.node import Node
 
 from std_msgs.msg import String as StringMsg
 from catalyst_interfaces.action import ExecuteTask
+from catalyst_execute.actions.robot_container_utils import (
+    sdk_z_delta_position_move_cmd,
+)
 from catalyst_execute.utils.execute_config import section
 from catalyst_execute.utils.service_clients import RobotServiceClients
 from catalyst_execute.utils.world_model_cache import WorldModelCache
@@ -100,6 +106,15 @@ class PlaceActionServer(Node):
         self._corner_registration_max_distance = float(
             cfg.get('corner_registration_max_distance', 0.1))
         self._start_settle_sec = float(cfg.get('start_settle_sec', 0.8))
+        self._sdk_post_release_z_lift_mm = float(
+            cfg.get('sdk_post_release_z_lift_mm', 50.0))
+        self._sdk_z_lift_speed_mm_s = float(
+            cfg.get('sdk_pre_place_retract_speed_mm_s', 30.0))
+        self._sdk_z_lift_tolerance_mm = float(
+            cfg.get('sdk_pre_place_retract_tolerance_mm', 1.0))
+        self._sdk_z_lift_timeout_sec = float(
+            cfg.get('sdk_pre_place_retract_timeout_sec', 120.0))
+        self._joint_home_speed = float(cfg.get('joint_home_speed', 0.1))
 
         self._cb_group = ReentrantCallbackGroup()
         self._svc = RobotServiceClients(self, self._cb_group)
@@ -358,8 +373,13 @@ class PlaceActionServer(Node):
         move = self._svc.sdk_call(
             corrected, timeout=self._position_correction_timeout_sec)
         if not move.get('success'):
-            self.get_logger().warn(
-                f'Position correction move: {move.get("message", "")}')
+            self._feedback(goal_handle, 'POSITION_CORRECTION',
+                           f'Move failed: {move.get("message", "")}')
+            self._sdk_cleanup()
+            self._restart_and_retract(goal_handle)
+            goal_handle.abort()
+            return self._result(False, 'POSITION_CORRECTION_FAILED',
+                                move.get('message', ''))
         self._after_motion()
 
         if self._canceled(goal_handle):
@@ -391,7 +411,29 @@ class PlaceActionServer(Node):
         self._wmc.gripper_open_if_needed(self._svc)
         time.sleep(self._sleep_after_release_sec)
 
-        # --- 9. SDK cleanup + restart controllers ---
+        # --- 9. SDK vertical lift before leaving SDK mode ---
+        self._feedback(
+            goal_handle, 'SDK_LIFT',
+            f'SDK position move +Z {self._sdk_post_release_z_lift_mm:.0f} mm')
+        pos_resp = self._svc.sdk_call({'action': 'get_position'})
+        if not pos_resp.get('success'):
+            self.get_logger().warn(
+                f'SDK get_position before Z lift: {pos_resp.get("message", "")}')
+        else:
+            z_lift_cmd = sdk_z_delta_position_move_cmd(
+                pos_resp['position'],
+                self._sdk_post_release_z_lift_mm,
+                speed_mm_s=self._sdk_z_lift_speed_mm_s,
+                tolerance_mm=self._sdk_z_lift_tolerance_mm,
+            )
+            move = self._svc.sdk_call(
+                z_lift_cmd, timeout=self._sdk_z_lift_timeout_sec)
+            if not move.get('success'):
+                self.get_logger().warn(
+                    f'SDK Z lift after release: {move.get("message", "")}')
+        self._after_motion()
+
+        # --- 10. SDK cleanup + restart controllers ---
         self._feedback(goal_handle, 'CLEANUP',
                        'SDK cleanup and controller restart')
         self._sdk_cleanup()
@@ -415,18 +457,39 @@ class PlaceActionServer(Node):
         if self._canceled(goal_handle):
             return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 10. Retract ---
+        # --- 11. MoveIt to approach (offset) then joint home ---
         self._svc.clear_eef_bounds()
-        self._retract(goal_handle)
+        self._retract_to_approach_place_offset(goal_handle)
+
+        self._feedback(goal_handle, 'HOME', 'Joint home')
+        move = self._svc.move_home(speed=self._joint_home_speed)
+        if not move.get('success'):
+            goal_handle.abort()
+            return self._result(False, 'HOME_FAILED', move.get('message', ''))
+        self._after_motion()
 
         goal_handle.succeed()
         return self._result(True, '', 'Place complete')
 
+    def _retract_to_approach_place_offset(self, goal_handle):
+        """Single MoveIt segment to approach_place_offset_pre (octomap on)."""
+        self._feedback(
+            goal_handle, 'RETRACTING',
+            'MoveIt to approach place (offset)')
+        self._svc.set_octomap_enabled(True)
+
+        pose_cmd = self._svc.compute_poses(
+            {'query': 'approach_place_offset_pre'})
+        if pose_cmd.get('success'):
+            self._svc.move_cartesian_cmd(
+                pose_cmd, timeout=self._move_cartesian_timeout_sec)
+        self._after_motion()
+
     def _retract(self, goal_handle):
-        """Retract to pre-place then approach-place (octomap on)."""
+        """Failure recovery: pre-place offset then approach (octomap on)."""
         self._feedback(goal_handle, 'RETRACTING', 'Retracting from place')
 
-        pose_cmd = self._svc.compute_poses({'query': 'pre_place'})
+        pose_cmd = self._svc.compute_poses({'query': 'pre_place_offset'})
         if pose_cmd.get('success'):
             self._svc.move_cartesian_cmd(
                 pose_cmd, timeout=self._move_cartesian_timeout_sec)
@@ -434,7 +497,8 @@ class PlaceActionServer(Node):
 
         self._svc.set_octomap_enabled(True)
 
-        pose_cmd = self._svc.compute_poses({'query': 'approach_place'})
+        pose_cmd = self._svc.compute_poses(
+            {'query': 'approach_place_offset_pre'})
         if pose_cmd.get('success'):
             self._svc.move_cartesian_cmd(
                 pose_cmd, timeout=self._move_cartesian_timeout_sec)
@@ -462,7 +526,8 @@ class PlaceActionServer(Node):
 def main():
     rclpy.init()
     node = PlaceActionServer()
-    executor = MultiThreadedExecutor()
+    n_threads = max(8, (os.cpu_count() or 4) * 2)
+    executor = MultiThreadedExecutor(num_threads=n_threads)
     executor.add_node(node)
     try:
         executor.spin()

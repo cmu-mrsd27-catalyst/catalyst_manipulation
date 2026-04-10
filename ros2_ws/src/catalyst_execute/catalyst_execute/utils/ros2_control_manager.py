@@ -10,18 +10,36 @@ import subprocess
 import tempfile
 import time
 
-import rclpy
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from rcl_interfaces.srv import GetParameters
 
 
-def restart_ros2_control(node, logger):
+def _wait_service_future(future, timeout_sec, logger, label):
+    """Wait for a client future without spin_until_future_complete.
+
+    spin_until_future_complete from inside another service callback can wedge
+    rclpy's MultiThreadedExecutor so later /sdk_control requests never run.
+    Polling with sleep lets other executor threads complete the response.
+    """
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if future.done():
+            return True
+        time.sleep(0.01)
+    logger.error(f'{label} (timeout {timeout_sec}s)')
+    return False
+
+
+def restart_ros2_control(node, logger, param_client):
     """Kill ros2_control_node, restart it, and re-spawn controllers.
 
     Args:
-        node: An rclpy Node (used to create service clients and spin).
+        node: An rclpy Node (unused except for API symmetry; may be used later).
         logger: An rclpy logger for status messages.
+        param_client: Persistent ``GetParameters`` client for
+            ``/robot_state_publisher/get_parameters`` (do not create a new
+            client per call — that leaks waitables on the node).
 
     Returns:
         True if successful, False otherwise.
@@ -30,9 +48,6 @@ def restart_ros2_control(node, logger):
 
     # 1. Get robot_description from robot_state_publisher
     logger.info('Fetching robot_description...')
-    param_client = node.create_client(
-        GetParameters, '/robot_state_publisher/get_parameters'
-    )
     if not param_client.wait_for_service(timeout_sec=5.0):
         logger.error('Cannot reach robot_state_publisher')
         return False
@@ -40,7 +55,9 @@ def restart_ros2_control(node, logger):
     req = GetParameters.Request()
     req.names = ['robot_description']
     future = param_client.call_async(req)
-    rclpy.spin_until_future_complete(node, future, timeout_sec=10.0)
+    if not _wait_service_future(
+            future, 10.0, logger, 'Failed to get robot_description'):
+        return False
     if future.result() is None:
         logger.error('Failed to get robot_description')
         return False

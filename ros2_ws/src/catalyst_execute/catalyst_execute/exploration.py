@@ -19,7 +19,6 @@ Usage (from another script that already has a running ROS node):
 import json
 import time
 
-import rclpy
 from catalyst_interfaces.srv import JsonCommand
 
 from catalyst_execute.utils.execute_config import section
@@ -58,7 +57,7 @@ class TagExplorer:
                  joint_move_timeout_sec=None):
         """
         Args:
-            node: An rclpy Node (used for logging and spinning).
+            node: An rclpy Node (used for logging and clock).
             joint_client: A ready rclpy service client for /joint_command.
             world_model_getter: A callable that returns the latest
                                 (timestamp, world_model_dict) tuple.
@@ -110,7 +109,6 @@ class TagExplorer:
         )
 
         j1 = self._sweep_start
-        count = 0
         while j1 <= self._sweep_end + 1e-6:
             joints = self._explore_joints.copy()
             joints[0] = j1
@@ -128,14 +126,13 @@ class TagExplorer:
             t_cutoff = self._node.get_clock().now().nanoseconds / 1e9
 
             tag_pose = self._read_fresh_tag(t_cutoff)
-            if tag_pose is not None and count > 0:
+            if tag_pose is not None:
                 logger.info(
                     f'Tag "{self._tag_frame}" found at joint1 = {j1:.1f} deg'
                 )
                 return tag_pose, j1
 
             j1 += self._sweep_step
-            count += 1
 
         logger.warn(f'Tag "{self._tag_frame}" not found in sweep range')
         return None, None
@@ -148,15 +145,26 @@ class TagExplorer:
             'speed': self._move_speed,
         })
         future = self._joint_client.call_async(req)
-        rclpy.spin_until_future_complete(
-            self._node, future, timeout_sec=self._joint_move_timeout_sec)
-        if future.result() is None:
+        deadline = time.monotonic() + self._joint_move_timeout_sec
+        while time.monotonic() < deadline:
+            if future.done():
+                break
+            # Do not spin from inside an action execute callback: yield so other
+            # executor threads can complete the service response and subscriptions.
+            time.sleep(0.01)
+        if not future.done():
             return False
-        resp = json.loads(future.result().response)
+        try:
+            res = future.result()
+        except Exception:
+            return False
+        if res is None:
+            return False
+        resp = json.loads(res.response)
         return resp.get('success', False)
 
     def _read_fresh_tag(self, t_cutoff):
-        """Spin until a world_model message newer than t_cutoff arrives,
+        """Wait until a world_model message newer than t_cutoff arrives,
         then check it for the target tag.
 
         Returns:
@@ -165,11 +173,12 @@ class TagExplorer:
         deadline = time.monotonic() + self._fresh_read_timeout
 
         while time.monotonic() < deadline:
-            rclpy.spin_once(self._node, timeout_sec=0.1)
             ts, wm = self._get_world_model()
             if wm is None or ts is None:
+                time.sleep(0.02)
                 continue
             if ts < t_cutoff:
+                time.sleep(0.02)
                 continue
             # This message arrived after we settled — trust it
             for tag in wm.get('apriltags', []):

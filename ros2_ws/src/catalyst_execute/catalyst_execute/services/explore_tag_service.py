@@ -9,8 +9,11 @@ Usage:
 """
 
 import json
+import os
 
 import rclpy
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -24,16 +27,22 @@ EXPLORE_TAG_SERVICE = '/explore_tag'
 class ExploreTagService(Node):
     def __init__(self):
         super().__init__('explore_tag_service')
+        self._cb_group = ReentrantCallbackGroup()
 
         # World model subscription
         self._world_model = None
         self._world_model_ts = None
-        self.create_subscription(String, '/world_model', self._world_model_cb, 10)
+        self.create_subscription(
+            String, '/world_model', self._world_model_cb, 10,
+            callback_group=self._cb_group)
 
         # Joint command client (used by TagExplorer)
-        self._joint_client = self.create_client(JsonCommand, JOINT_SERVICE)
+        self._joint_client = self.create_client(
+            JsonCommand, JOINT_SERVICE, callback_group=self._cb_group)
 
-        self.create_service(JsonCommand, EXPLORE_TAG_SERVICE, self._handle_request)
+        self.create_service(
+            JsonCommand, EXPLORE_TAG_SERVICE, self._handle_request,
+            callback_group=self._cb_group)
         self.get_logger().info(f'Explore tag service ready on {EXPLORE_TAG_SERVICE}')
 
     def _world_model_cb(self, msg: String):
@@ -105,9 +114,11 @@ class ExploreTagService(Node):
 def main():
     rclpy.init()
     node = ExploreTagService()
-
+    n_threads = max(8, (os.cpu_count() or 4) * 2)
+    executor = MultiThreadedExecutor(num_threads=n_threads)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         node.get_logger().info('Shutting down...')
     finally:

@@ -34,7 +34,7 @@ class ComputePosesService(Node):
         self._service_name = cp.get('service_name', '/compute_poses')
         self._pre_height = float(cp.get('pre_height', 0.05))
         self._pick_grasp_offset_z_m = float(
-            cp.get('pick_grasp_offset_z_m', 0.0))
+            cp.get('pick_grasp_offset_z_m', -0.007))
         self._pre_place_planar_dx = float(
             cp.get('pre_place_planar_offset_x_m', 0.015))
         self._pre_place_planar_dy = float(
