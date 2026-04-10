@@ -64,7 +64,7 @@ class ExploreTagService(Node):
         sweep_start = cmd.get('sweep_start')
         sweep_end = cmd.get('sweep_end')
         sweep_step = cmd.get('sweep_step')
-        move_speed = cmd.get('move_speed', 0.3)
+        move_speed = cmd.get('move_speed', 0.1)
 
         kwargs = {
             'tag_frame': tag_frame,

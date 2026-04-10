@@ -3,9 +3,9 @@
 
 Handles the full place sequence:
   1. Compute poses from tag
-  2. Approach place at offset position (octomap on)
-  3. Pre-place at offset position
-  4. SDK connect (xArm SDK + F/T sensor)
+  2. Approach place at offset (octomap on, collision sensitivity 5)
+  3. Pre-place at offset (still 5); then octomap off
+  4. SDK connect (collision sensitivity 0)
   5. Corner registration (velocity control)
   6. Position correction (SDK position move)
   7. Force descent (velocity control with F/T)
@@ -43,24 +43,80 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
+from std_msgs.msg import String as StringMsg
 from catalyst_interfaces.action import ExecuteTask
+from catalyst_execute.utils.execute_config import section
 from catalyst_execute.utils.service_clients import RobotServiceClients
+from catalyst_execute.utils.world_model_cache import WorldModelCache
 
 
 class PlaceActionServer(Node):
     def __init__(self):
         super().__init__('place_action_server')
+        cfg = section('place_action_server')
+        self._action_name = cfg.get('action_name', '/place')
+        self._robot_phase_topic = cfg.get('robot_phase_topic', '/robot_phase')
+        self._phase_pub_queue_size = int(cfg.get('phase_pub_queue_size', 10))
+        self._default_contact_force = float(
+            cfg.get('default_contact_force_threshold', 1.0))
+        self._default_corner_force = float(
+            cfg.get('default_corner_force_threshold', 1.0))
+        self._default_descent_force = float(
+            cfg.get('default_descent_force_threshold', 5.0))
+        self._default_descent_speed = float(
+            cfg.get('default_descent_speed', -5.0))
+        self._default_search_speed = float(
+            cfg.get('default_search_speed', 0.003))
+        self._default_ref_velocity = float(
+            cfg.get('default_ref_velocity', -0.005))
+        self._sdk_cleanup_timeout_sec = float(
+            cfg.get('sdk_cleanup_timeout_sec', 30.0))
+        self._sdk_connect_timeout_sec = float(
+            cfg.get('sdk_connect_timeout_sec', 30.0))
+        self._corner_registration_timeout_sec = float(
+            cfg.get('corner_registration_timeout_sec', 120.0))
+        self._position_correction_timeout_sec = float(
+            cfg.get('position_correction_timeout_sec', 30.0))
+        self._force_descent_timeout_sec = float(
+            cfg.get('force_descent_timeout_sec', 60.0))
+        self._restart_controllers_timeout_sec = float(
+            cfg.get('restart_controllers_timeout_sec', 60.0))
+        self._wait_moveit_services_timeout_sec = float(
+            cfg.get('wait_moveit_services_timeout_sec', 30.0))
+        self._move_cartesian_timeout_sec = float(
+            cfg.get('move_cartesian_timeout_sec', 60.0))
+        self._motion_settle_sec = float(
+            cfg.get(
+                'motion_settle_sec',
+                cfg.get(
+                    'sleep_after_pre_place_sec',
+                    cfg.get('sleep_after_approach_sec', 0.5),
+                ),
+            ))
+        self._sleep_after_release_sec = float(
+            cfg.get('sleep_after_release_sec', 0.5))
+        self._sleep_after_restart_sec = float(
+            cfg.get('sleep_after_restart_sec', 1.0))
+        self._corner_registration_max_distance = float(
+            cfg.get('corner_registration_max_distance', 0.1))
+        self._start_settle_sec = float(cfg.get('start_settle_sec', 0.8))
+
         self._cb_group = ReentrantCallbackGroup()
         self._svc = RobotServiceClients(self, self._cb_group)
 
+        self._phase_pub = self.create_publisher(
+            StringMsg, self._robot_phase_topic, self._phase_pub_queue_size)
+        self._publish_phase('IDLE')
+
         self._action_server = ActionServer(
-            self, ExecuteTask, '/place',
+            self, ExecuteTask, self._action_name,
             execute_callback=self._execute_cb,
             goal_callback=self._goal_cb,
             cancel_callback=self._cancel_cb,
             callback_group=self._cb_group,
         )
-        self.get_logger().info('Place action server ready on /place')
+        self._wmc = WorldModelCache(self, self._cb_group)
+        self.get_logger().info(f'Place action server ready on {self._action_name}')
 
     def _goal_cb(self, goal_request):
         return GoalResponse.ACCEPT
@@ -71,13 +127,20 @@ class PlaceActionServer(Node):
 
     # ── Helpers ──
 
+    def _publish_phase(self, phase):
+        msg = StringMsg()
+        msg.data = phase
+        self._phase_pub.publish(msg)
+
     def _feedback(self, goal_handle, phase, message=''):
+        self._publish_phase(phase)
         fb = ExecuteTask.Feedback()
         fb.feedback = json.dumps({'phase': phase, 'message': message})
         goal_handle.publish_feedback(fb)
         self.get_logger().info(f'[Place] {phase}: {message}')
 
     def _result(self, success, error_code='', message=''):
+        self._publish_phase('IDLE')
         r = ExecuteTask.Result()
         r.response = json.dumps({
             'success': success,
@@ -88,6 +151,7 @@ class PlaceActionServer(Node):
 
     def _canceled(self, goal_handle):
         if goal_handle.is_cancel_requested:
+            self.get_logger().warn('[Place] Cancel detected — cleaning up')
             goal_handle.canceled()
             return True
         return False
@@ -95,7 +159,13 @@ class PlaceActionServer(Node):
     def _sdk_cleanup(self):
         """Best-effort SDK cleanup — always safe to call."""
         self.get_logger().info('Running SDK cleanup...')
-        self._svc.sdk_call({'action': 'cleanup'}, timeout=30.0)
+        self._svc.sdk_call(
+            {'action': 'cleanup'}, timeout=self._sdk_cleanup_timeout_sec)
+
+    def _after_motion(self):
+        """Pause after each cartesian execute or SDK arm-motion segment."""
+        if self._motion_settle_sec > 0.0:
+            time.sleep(self._motion_settle_sec)
 
     # ── Execute ──
 
@@ -112,19 +182,34 @@ class PlaceActionServer(Node):
             return self._result(False, 'MISSING_TAG_POSE', 'tag_pose required')
 
         # Placement parameters (with defaults matching current behavior)
-        contact_force = cmd.get('contact_force_threshold', 1.0)
-        corner_force = cmd.get('corner_force_threshold', 1.0)
-        descent_force = cmd.get('descent_force_threshold', 5.0)
-        descent_speed = cmd.get('descent_speed', -5.0)
-        search_speed = cmd.get('search_speed', 0.003)
-        ref_velocity = cmd.get('ref_velocity', -0.005)
+        contact_force = cmd.get(
+            'contact_force_threshold', self._default_contact_force)
+        corner_force = cmd.get(
+            'corner_force_threshold', self._default_corner_force)
+        descent_force = cmd.get(
+            'descent_force_threshold', self._default_descent_force)
+        descent_speed = cmd.get('descent_speed', self._default_descent_speed)
+        search_speed = cmd.get('search_speed', self._default_search_speed)
+        ref_velocity = cmd.get('ref_velocity', self._default_ref_velocity)
 
         # Wait for required services
-        needed = ['cartesian', 'gripper', 'compute_poses', 'sdk', 'octomap']
+        needed = [
+            'cartesian', 'gripper', 'compute_poses', 'sdk', 'octomap',
+            'clear_octomap',
+        ]
         if not self._svc.wait_for_services(names=needed):
             goal_handle.abort()
             return self._result(False, 'SERVICES_UNAVAILABLE',
                                 'Required services not available')
+
+        if self._start_settle_sec > 0.0:
+            self._feedback(
+                goal_handle, 'SETTLING',
+                f'Waiting {self._start_settle_sec:.1f}s for arm to settle')
+            time.sleep(self._start_settle_sec)
+
+        if self._canceled(goal_handle):
+            return self._result(False, 'CANCELED', 'Canceled')
 
         sdk_connected = False
 
@@ -146,6 +231,9 @@ class PlaceActionServer(Node):
                    descent_speed, search_speed, ref_velocity,
                    sdk_connected):
 
+        # Long approach from explore/home: octomap off for transit (see pick_action_server).
+        self._svc.set_octomap_enabled(False)
+
         # --- 1. Compute all poses from tag ---
         self._feedback(goal_handle, 'COMPUTING_POSES')
         resp = self._svc.compute_poses({'tag_pose': tag_pose})
@@ -157,9 +245,8 @@ class PlaceActionServer(Node):
         if self._canceled(goal_handle):
             return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 2. Approach place at offset position (octomap on) ---
+        # --- 2. Approach place at offset (transit: octomap off) ---
         self._feedback(goal_handle, 'APPROACHING', 'Moving to approach place')
-        self._svc.set_octomap_enabled(True)
 
         pose_cmd = self._svc.compute_poses(
             {'query': 'approach_place_offset_pre'})
@@ -168,12 +255,19 @@ class PlaceActionServer(Node):
             return self._result(False, 'POSE_QUERY_FAILED',
                                 pose_cmd.get('message', ''))
 
-        move = self._svc.move_cartesian_cmd(pose_cmd, timeout=60.0)
+        move = self._svc.move_cartesian_cmd(
+            pose_cmd, timeout=self._move_cartesian_timeout_sec)
         if not move.get('success'):
             goal_handle.abort()
             return self._result(False, 'APPROACH_FAILED',
                                 move.get('message', ''))
-        time.sleep(0.5)
+        self._after_motion()
+
+        if self._canceled(goal_handle):
+            return self._result(False, 'CANCELED', 'Canceled')
+
+        self._svc.set_octomap_enabled(True)
+        self._svc.clear_octomap()
 
         if self._canceled(goal_handle):
             return self._result(False, 'CANCELED', 'Canceled')
@@ -186,22 +280,28 @@ class PlaceActionServer(Node):
             return self._result(False, 'POSE_QUERY_FAILED',
                                 pose_cmd.get('message', ''))
 
-        move = self._svc.move_cartesian_cmd(pose_cmd, timeout=60.0)
+        move = self._svc.move_cartesian_cmd(
+            pose_cmd, timeout=self._move_cartesian_timeout_sec)
         if not move.get('success'):
             goal_handle.abort()
             return self._result(False, 'PRE_PLACE_FAILED',
                                 move.get('message', ''))
-        time.sleep(1.0)
+        self._after_motion()
 
         self._svc.set_octomap_enabled(False)
 
+        # Enable EEF bounds for close-range work
+        self._svc.set_eef_bounds(tag_pose)
+
         if self._canceled(goal_handle):
+            self._svc.clear_eef_bounds()
             return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 4. SDK connect ---
+        # --- 4. SDK connect (close-range force work) ---
         self._feedback(goal_handle, 'SDK_CONNECTING',
                        'Connecting to xArm SDK + F/T sensor')
-        resp = self._svc.sdk_call({'action': 'connect'}, timeout=30.0)
+        resp = self._svc.sdk_call(
+            {'action': 'connect'}, timeout=self._sdk_connect_timeout_sec)
         if not resp.get('success'):
             goal_handle.abort()
             return self._result(False, 'SDK_CONNECT_FAILED',
@@ -210,6 +310,7 @@ class PlaceActionServer(Node):
 
         if self._canceled(goal_handle):
             self._sdk_cleanup()
+            self._restart_and_retract(goal_handle)
             return self._result(False, 'CANCELED', 'Canceled')
 
         # --- 5. Corner registration ---
@@ -222,8 +323,8 @@ class PlaceActionServer(Node):
             'contact_force_threshold': contact_force,
             'corner_force_threshold': corner_force,
             'search_speed': search_speed,
-            'max_distance': 0.1,
-        }, timeout=120.0)
+            'max_distance': self._corner_registration_max_distance,
+        }, timeout=self._corner_registration_timeout_sec)
 
         if not resp.get('success'):
             self._feedback(goal_handle, 'CORNER_REGISTRATION',
@@ -233,6 +334,13 @@ class PlaceActionServer(Node):
             goal_handle.abort()
             return self._result(False, 'CORNER_REGISTRATION_FAILED',
                                 resp.get('message', ''))
+
+        self._after_motion()
+
+        if self._canceled(goal_handle):
+            self._sdk_cleanup()
+            self._restart_and_retract(goal_handle)
+            return self._result(False, 'CANCELED', 'Canceled')
 
         # --- 6. Position correction ---
         self._feedback(goal_handle, 'POSITION_CORRECTION',
@@ -247,10 +355,12 @@ class PlaceActionServer(Node):
             return self._result(False, 'POSITION_CORRECTION_FAILED',
                                 corrected.get('message', ''))
 
-        move = self._svc.sdk_call(corrected, timeout=30.0)
+        move = self._svc.sdk_call(
+            corrected, timeout=self._position_correction_timeout_sec)
         if not move.get('success'):
             self.get_logger().warn(
                 f'Position correction move: {move.get("message", "")}')
+        self._after_motion()
 
         if self._canceled(goal_handle):
             self._sdk_cleanup()
@@ -266,14 +376,20 @@ class PlaceActionServer(Node):
             'descent_speed': descent_speed,
             'force_threshold': descent_force,
             'rebias': True,
-        }, timeout=60.0)
+        }, timeout=self._force_descent_timeout_sec)
         self._feedback(goal_handle, 'FORCE_DESCENT',
                        resp.get('message', ''))
+        self._after_motion()
+
+        if self._canceled(goal_handle):
+            self._sdk_cleanup()
+            self._restart_and_retract(goal_handle)
+            return self._result(False, 'CANCELED', 'Canceled')
 
         # --- 8. Release object ---
         self._feedback(goal_handle, 'RELEASING', 'Opening gripper')
-        self._svc.gripper('open')
-        time.sleep(0.5)
+        self._wmc.gripper_open_if_needed(self._svc)
+        time.sleep(self._sleep_after_release_sec)
 
         # --- 9. SDK cleanup + restart controllers ---
         self._feedback(goal_handle, 'CLEANUP',
@@ -281,7 +397,8 @@ class PlaceActionServer(Node):
         self._sdk_cleanup()
 
         resp = self._svc.sdk_call(
-            {'action': 'restart_controllers'}, timeout=60.0)
+            {'action': 'restart_controllers'},
+            timeout=self._restart_controllers_timeout_sec)
         if not resp.get('success'):
             goal_handle.abort()
             return self._result(False, 'CONTROLLER_RESTART_FAILED',
@@ -291,10 +408,15 @@ class PlaceActionServer(Node):
         self._feedback(goal_handle, 'WAITING_FOR_SERVICES',
                        'Waiting for controllers to recover')
         self._svc.wait_for_services(
-            names=['joint', 'cartesian'], timeout=30.0)
-        time.sleep(1.0)
+            names=['joint', 'cartesian'],
+            timeout=self._wait_moveit_services_timeout_sec)
+        time.sleep(self._sleep_after_restart_sec)
+
+        if self._canceled(goal_handle):
+            return self._result(False, 'CANCELED', 'Canceled')
 
         # --- 10. Retract ---
+        self._svc.clear_eef_bounds()
         self._retract(goal_handle)
 
         goal_handle.succeed()
@@ -306,26 +428,34 @@ class PlaceActionServer(Node):
 
         pose_cmd = self._svc.compute_poses({'query': 'pre_place'})
         if pose_cmd.get('success'):
-            self._svc.move_cartesian_cmd(pose_cmd, timeout=60.0)
-        time.sleep(0.5)
+            self._svc.move_cartesian_cmd(
+                pose_cmd, timeout=self._move_cartesian_timeout_sec)
+        self._after_motion()
 
         self._svc.set_octomap_enabled(True)
 
         pose_cmd = self._svc.compute_poses({'query': 'approach_place'})
         if pose_cmd.get('success'):
-            self._svc.move_cartesian_cmd(pose_cmd, timeout=60.0)
-        time.sleep(0.5)
+            self._svc.move_cartesian_cmd(
+                pose_cmd, timeout=self._move_cartesian_timeout_sec)
+        self._after_motion()
 
     def _restart_and_retract(self, goal_handle):
         """Restart controllers and retract — used on failure paths."""
         self._feedback(goal_handle, 'RECOVERY',
                        'Restarting controllers after failure')
+        try:
+            self._svc.clear_eef_bounds()
+        except Exception:
+            pass
         resp = self._svc.sdk_call(
-            {'action': 'restart_controllers'}, timeout=60.0)
+            {'action': 'restart_controllers'},
+            timeout=self._restart_controllers_timeout_sec)
         if resp.get('success'):
             self._svc.wait_for_services(
-                names=['joint', 'cartesian'], timeout=30.0)
-            time.sleep(1.0)
+                names=['joint', 'cartesian'],
+                timeout=self._wait_moveit_services_timeout_sec)
+            time.sleep(self._sleep_after_restart_sec)
             self._retract(goal_handle)
 
 

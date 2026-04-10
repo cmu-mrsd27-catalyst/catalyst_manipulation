@@ -48,6 +48,12 @@ This starts an interactive container with:
 
 The workspace is bind-mounted, so any changes inside the container (builds, edits) are reflected on the host and vice versa.
 
+### Config paths (Docker)
+
+ROS resolves package files through **install space** after `source install/setup.bash` (e.g. `/root/ros2_ws/install/<pkg>/share/<pkg>/`), not through your host path like `/home/...`.
+
+`run_docker.sh` sets **`CATALYST_WORLD_MODEL_YAML=/root/ros2_ws/src/catalyst_world_model/config/world_model.yaml`** so `world_model` health toggles always follow the **source** tree you edit in the bind-mounted workspace. Override or unset that variable if you want to use only the installed copy.
+
 ## Attach Additional Terminals
 
 To open another terminal in the same running container:

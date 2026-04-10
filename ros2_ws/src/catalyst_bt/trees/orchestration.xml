@@ -1,0 +1,168 @@
+<root BTCPP_format="4" main_tree_to_execute="MainPickOnly">
+
+  <!--
+    Task trees are selected at runtime via /bt_execute (JsonCommand).
+    Explore runs once per service call; tag_pose comes from explore result (blackboard explore_result).
+
+    Octomap on/clear: owned by pick/place action servers only (not in InitMinimal).
+  -->
+
+  <!-- ========== Init: home only ========== -->
+  <BehaviorTree ID="InitMinimal">
+    <Sequence name="init_minimal">
+      <JsonService name="Home"
+        service_name="/joint_command"
+        command='{"pose": "home", "speed": 0.1}'/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ========== pick_only ========== -->
+  <BehaviorTree ID="MainPickOnly">
+    <ReactiveSequence name="safe_pick_only">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== place_only ========== -->
+  <BehaviorTree ID="MainPlaceOnly">
+    <ReactiveSequence name="safe_place_only">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Place"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== pick_place (one explore, pick then place, then home) ========== -->
+  <BehaviorTree ID="MainPickPlace">
+    <ReactiveSequence name="safe_pick_place">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <TaskAction name="Place"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== place_pick (one explore, place then pick, then home) ========== -->
+  <BehaviorTree ID="MainPlacePick">
+    <ReactiveSequence name="safe_place_pick">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Place"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== pick then place well plate on robot-side container ========== -->
+  <BehaviorTree ID="MainPickThenPlaceOnRobot">
+    <ReactiveSequence name="safe_pick_then_place_on_robot">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="Explore"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Pick"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeAfterPick"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+        <TaskAction name="PlaceOnRobot"
+          action_name="/place_on_robot"
+          command='{}'
+          timeout_sec="400"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== pick well plate from robot-side container only ========== -->
+  <BehaviorTree ID="MainPickFromRobotContainer">
+    <ReactiveSequence name="safe_pick_from_robot_container">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="PickFromRobotContainer"
+          action_name="/pick_from_robot_container"
+          command='{"use_guide_mode": true}'
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+</root>

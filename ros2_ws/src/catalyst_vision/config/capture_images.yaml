@@ -1,0 +1,7 @@
+# Defaults for ros2 run catalyst_vision capture_images
+
+capture_images:
+  save_dir: "~/test_images_catalyst"
+  color_topic: "/camera/camera/color/image_raw"
+  depth_topic: "/camera/camera/aligned_depth_to_color/image_raw"
+  image_qos_depth: 5

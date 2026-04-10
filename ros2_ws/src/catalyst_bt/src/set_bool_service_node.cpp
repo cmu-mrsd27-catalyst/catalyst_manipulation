@@ -1,5 +1,8 @@
 #include "catalyst_bt/set_bool_service_node.hpp"
 
+#include <chrono>
+#include <thread>
+
 namespace catalyst_bt {
 
 SetBoolServiceNode::SetBoolServiceNode(
@@ -48,7 +51,7 @@ BT::NodeStatus SetBoolServiceNode::tick() {
     auto future = client->async_send_request(request);
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (rclcpp::ok()) {
-        rclcpp::spin_some(ros_node_);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         if (future.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready) {
             break;
         }

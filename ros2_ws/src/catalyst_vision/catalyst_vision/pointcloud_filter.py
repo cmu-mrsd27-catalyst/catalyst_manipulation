@@ -9,7 +9,12 @@ For each point, the mean distance to its K nearest neighbours is computed.
 Points whose mean distance exceeds (global_mean + std_multiplier * global_std)
 are rejected as outliers.
 
+Defaults load from share/catalyst_vision/config/pointcloud_filter.yaml (or
+source tree config/pointcloud_filter.yaml). ROS parameters still override.
+
 Usage:
+  ros2 run catalyst_vision pointcloud_filter
+
   ros2 run catalyst_vision pointcloud_filter --ros-args \
     -p input_topic:=/camera/camera/depth/color/points \
     -p output_topic:=/filtered_pointcloud \
@@ -19,15 +24,63 @@ Usage:
     -p max_range:=0.8
 """
 
+import os
 import struct
 
 import numpy as np
 from scipy.spatial import cKDTree
+import yaml
+from ament_index_python.packages import get_package_share_directory
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
+
+
+def _load_pointcloud_filter_config():
+    path = None
+    try:
+        share = get_package_share_directory('catalyst_vision')
+        p = os.path.join(share, 'config', 'pointcloud_filter.yaml')
+        if os.path.isfile(p):
+            path = p
+    except Exception:
+        pass
+    if path is None:
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = os.path.normpath(
+            os.path.join(here, '..', 'config', 'pointcloud_filter.yaml'))
+        if os.path.isfile(src):
+            path = src
+
+    defaults = {
+        'input_topic': '/camera/camera/depth/color/points',
+        'output_topic': '/filtered_pointcloud',
+        'k_neighbours': 20,
+        'std_multiplier': 1.0,
+        'voxel_size': 0.005,
+        'max_range': 0.8,
+        'qos_depth': 5,
+    }
+    if not path:
+        return defaults
+
+    with open(path, 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f) or {}
+    block = data.get('pointcloud_filter') or {}
+    out = defaults.copy()
+    for key in defaults:
+        if key not in block:
+            continue
+        val = block[key]
+        if key in ('k_neighbours', 'qos_depth'):
+            out[key] = int(val)
+        elif key in ('std_multiplier', 'voxel_size', 'max_range'):
+            out[key] = float(val)
+        else:
+            out[key] = str(val)
+    return out
 
 
 def pointcloud2_to_xyz(msg: PointCloud2) -> np.ndarray:
@@ -134,23 +187,26 @@ class PointCloudFilter(Node):
     def __init__(self):
         super().__init__('pointcloud_filter')
 
-        self.declare_parameter('input_topic', '/camera/camera/depth/color/points')
-        self.declare_parameter('output_topic', '/filtered_pointcloud')
-        self.declare_parameter('k_neighbours', 20)
-        self.declare_parameter('std_multiplier', 1.0)
-        self.declare_parameter('voxel_size', 0.005)  # metres, 0 to disable
-        self.declare_parameter('max_range', 0.8)      # metres, drop points beyond this
+        cfg = _load_pointcloud_filter_config()
+        self.declare_parameter('input_topic', cfg['input_topic'])
+        self.declare_parameter('output_topic', cfg['output_topic'])
+        self.declare_parameter('k_neighbours', cfg['k_neighbours'])
+        self.declare_parameter('std_multiplier', cfg['std_multiplier'])
+        self.declare_parameter('voxel_size', cfg['voxel_size'])
+        self.declare_parameter('max_range', cfg['max_range'])
+        self.declare_parameter('qos_depth', cfg['qos_depth'])
 
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value
+        qos_depth = self.get_parameter('qos_depth').value
 
         self._k = self.get_parameter('k_neighbours').value
         self._std_mul = self.get_parameter('std_multiplier').value
         self._voxel = self.get_parameter('voxel_size').value
         self._max_range = self.get_parameter('max_range').value
 
-        self._pub = self.create_publisher(PointCloud2, output_topic, 5)
-        self.create_subscription(PointCloud2, input_topic, self._cb, 5)
+        self._pub = self.create_publisher(PointCloud2, output_topic, qos_depth)
+        self.create_subscription(PointCloud2, input_topic, self._cb, qos_depth)
 
         self.get_logger().info(
             f'PointCloud filter: {input_topic} -> {output_topic}  '

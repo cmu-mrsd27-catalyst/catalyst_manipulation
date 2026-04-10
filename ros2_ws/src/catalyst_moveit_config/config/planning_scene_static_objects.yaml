@@ -1,0 +1,13 @@
+# Collision bodies in link_base (robot base frame). Loaded by scene_manager when launching MoveIt.
+# UNITS: meters. Box dimensions are full extents along base X, Y, Z; pose is box center.
+#
+link_base_boxes:
+  - id: workspace_box
+    size:
+      x: 0.14   # along base X
+      y: 0.10   # along base Y
+      z: 0.08   # height (base Z)
+    position:
+      x: 0.175
+      y: 0.075
+      z: 0.04

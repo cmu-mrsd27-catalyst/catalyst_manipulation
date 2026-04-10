@@ -1,0 +1,22 @@
+# Used by world_model_node and demo.launch: install share, or CATALYST_WORLD_MODEL_YAML
+# (e.g. /root/ros2_ws/src/catalyst_world_model/config/world_model.yaml in Docker).
+# Set any health.check_* to false to skip it (check reports ok: true with disabled: true).
+
+world_model_node:
+  ros__parameters:
+    # Existing topic / IP parameters (optional overrides; defaults match code)
+    # robot_ip: "192.168.1.212"
+    # ft_sensor_ip: "192.168.2.1"
+    # camera_topic: "/camera/camera/color/image_raw"
+    # ft_topic: "/force_torque_sensor_broadcaster/wrench"
+    # octomap_topic: "/filtered_pointcloud"
+
+    # --- Per-check toggles (true = enforce, false = disabled) ---
+    health.check_camera: true
+    health.check_gripper: false
+    health.check_ft_sensor: false
+    health.check_robot_state: false
+    health.check_controllers: false
+    health.check_octomap: true
+    health.check_collision_force: true
+    health.check_joint_temperature: false

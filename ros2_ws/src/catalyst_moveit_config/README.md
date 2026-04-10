@@ -72,7 +72,7 @@ The SRDF defines three planning groups:
 
 | Pose | Group | Description |
 |------|-------|-------------|
-| `home` | xarm6 | All joints at 0 |
+| `home` | xarm6 | Named configuration in SRDF (not all zeros — see `catalyst_manipulator.srdf`) |
 | `hold_up` | xarm6 | joint5 at -90 degrees |
 | `open` | bio_gripper | right_finger_joint at 0.04 m |
 | `close` | bio_gripper | right_finger_joint at 0 m |
@@ -95,12 +95,10 @@ IK solver for the `xarm6` group:
 
 | Parameter | Value |
 |-----------|-------|
-| Solver | `kdl_kinematics_plugin/KDLKinematicsPlugin` |
+| Solver | `trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin` |
 | Search resolution | 0.005 |
 | Timeout | 0.005 s |
 | Attempts | 3 |
-
-Alternative solvers (TRAC-IK, pick_ik) are available as commented options.
 
 ### joint_limits.yaml
 
@@ -149,7 +147,7 @@ The SRDF disables collision checking for:
 - `catalyst_description` — Robot URDF (xArm-6 + bio gripper)
 - `moveit_ros_move_group` — move_group node
 - `moveit_ros_planning_interface` — Planning interface
-- `moveit_kinematics` — IK solvers (KDL)
+- `moveit_kinematics` — IK plugins (TRAC-IK as configured)
 - `moveit_planners_ompl` — OMPL planning plugin
 - `moveit_ros_visualization` — RViz MoveIt plugin
 - `robot_state_publisher` — TF publishing from URDF

@@ -79,26 +79,24 @@ def compute_pose_from_tag(tag_pose, H_TCP_TO):
     return H_tag @ H_TCP_TO
 
 
-def compute_approach_pose(H_target, H_tag):
-    """Compute approach pose: same orientation as target, pulled back along tag Z to 5cm ahead of tag.
+def compute_approach_pose(H_target, tag_position, pre_height_m, approach_tag_y_offset_m=-0.05):
+    """Approach pick/place in link_base: same x, z, and orientation as pre-pick/pre-place.
+
+    ``pre_height_m`` is added to target Z (same as ``pre_pick`` / ``pre_place`` height).
+    ``y = tag_position['y'] + approach_tag_y_offset_m`` (default −0.05 m = 5 cm less than tag y).
 
     Args:
-        H_target: 4x4 homogeneous matrix of the target pose
-        H_tag: 4x4 homogeneous matrix of the AprilTag pose
+        H_target: 4x4 pick or place TCP in base
+        tag_position: dict with 'x', 'y', 'z' (AprilTag in base)
+        pre_height_m: added to target z (m), same as compute_poses ``pre_height``
+        approach_tag_y_offset_m: added to tag y for approach y (m)
 
     Returns:
         4x4 homogeneous matrix of the approach pose
     """
-    tag_pos = H_tag[:3, 3]
-    tag_z = H_tag[:3, 2]  # tag Z axis (points outward)
-    target_pos = H_target[:3, 3]
-
-    # Project target onto tag Z axis (distance from tag along tag Z)
-    depth = np.dot(target_pos - tag_pos, tag_z)
-    # Pull back to 5cm ahead of tag
-    offset = 0.05 - depth
-    approach_pos = target_pos + offset * tag_z
-
-    H_approach = H_target.copy()
-    H_approach[:3, 3] = approach_pos
-    return H_approach
+    H = H_target.copy()
+    ty = float(tag_position['y'])
+    H[0, 3] = H_target[0, 3]
+    H[1, 3] = ty + float(approach_tag_y_offset_m)
+    H[2, 3] = H_target[2, 3] + float(pre_height_m)
+    return H

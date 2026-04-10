@@ -8,6 +8,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <behaviortree_cpp/action_node.h>
 #include <nlohmann/json.hpp>
+#include <std_srvs/srv/empty.hpp>
 #include <catalyst_interfaces/action/execute_task.hpp>
 
 namespace catalyst_bt {
@@ -68,6 +69,9 @@ private:
 
     // Helper to read the command string (handles BT.CPP blackboard quirk)
     std::string get_command_string();
+
+    // Stop motion client (shared across all TaskAction instances on same node)
+    rclcpp::Client<std_srvs::srv::Empty>::SharedPtr stop_motion_client_;
 };
 
 }  // namespace catalyst_bt

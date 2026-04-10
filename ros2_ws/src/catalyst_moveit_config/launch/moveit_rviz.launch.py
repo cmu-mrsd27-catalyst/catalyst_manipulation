@@ -10,7 +10,7 @@ Launches:
 import os
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -170,6 +170,23 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
     )
 
+    planning_scene_yaml = os.path.join(
+        moveit_config_pkg, 'config', 'planning_scene_static_objects.yaml')
+    scene_manager_node = Node(
+        package='catalyst_motion_planner',
+        executable='scene_manager',
+        name='scene_manager',
+        output='screen',
+        parameters=[
+            {'world_objects_yaml': planning_scene_yaml},
+            {'base_frame_z': 0.80},
+        ],
+    )
+    delayed_scene_manager = TimerAction(
+        period=2.0,
+        actions=[scene_manager_node],
+    )
+
     return LaunchDescription([
         declare_use_sim_time,
         declare_rviz_config,
@@ -177,4 +194,5 @@ def generate_launch_description():
         joint_state_publisher_gui,
         move_group_node,
         rviz_node,
+        delayed_scene_manager,
     ])

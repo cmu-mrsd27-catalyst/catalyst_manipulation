@@ -1,0 +1,11 @@
+# Defaults for ros2 run catalyst_vision pointcloud_filter
+# Override via launch/params or: ros2 run ... --ros-args -p input_topic:=/other/topic
+
+pointcloud_filter:
+  input_topic: "/camera/camera/depth/color/points"
+  output_topic: "/filtered_pointcloud"
+  k_neighbours: 20
+  std_multiplier: 1.0
+  voxel_size: 0.005
+  max_range: 0.8
+  qos_depth: 5

@@ -1,12 +1,18 @@
 #include "catalyst_bt/task_action_node.hpp"
 
+#include <chrono>
+#include <thread>
+
 namespace catalyst_bt {
 
 TaskActionNode::TaskActionNode(
     const std::string& name,
     const BT::NodeConfiguration& config,
     rclcpp::Node::SharedPtr ros_node)
-    : BT::StatefulActionNode(name, config), ros_node_(ros_node) {}
+    : BT::StatefulActionNode(name, config), ros_node_(ros_node)
+{
+    stop_motion_client_ = ros_node_->create_client<std_srvs::srv::Empty>("/stop_motion");
+}
 
 BT::PortsList TaskActionNode::providedPorts() {
     return {
@@ -180,8 +186,9 @@ BT::NodeStatus TaskActionNode::onStart() {
 }
 
 BT::NodeStatus TaskActionNode::onRunning() {
-    // Process ROS callbacks so goal_response / feedback / result arrive
-    rclcpp::spin_some(ros_node_);
+    // Yield so MultiThreadedExecutor threads can run action client callbacks (no spin_some:
+    // node is already on the executor).
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     std::lock_guard<std::mutex> lock(result_mutex_);
 
@@ -208,10 +215,20 @@ BT::NodeStatus TaskActionNode::onRunning() {
 }
 
 void TaskActionNode::onHalted() {
-    RCLCPP_INFO(ros_node_->get_logger(),
-                "[BT] %s: halted, canceling goal on '%s'",
+    RCLCPP_WARN(ros_node_->get_logger(),
+                "[BT] %s: HALTED — stopping arm and canceling '%s'",
                 name().c_str(), current_action_.c_str());
 
+    // 1. Stop the arm immediately (interrupts current MoveIt trajectory)
+    if (stop_motion_client_->service_is_ready()) {
+        auto req = std::make_shared<std_srvs::srv::Empty::Request>();
+        stop_motion_client_->async_send_request(req);
+    } else {
+        RCLCPP_WARN(ros_node_->get_logger(),
+                     "[BT] /stop_motion not available — arm may finish current motion");
+    }
+
+    // 2. Cancel the action goal so the action server stops its sequence
     std::lock_guard<std::mutex> lock(result_mutex_);
     if (goal_handle_) {
         auto client = get_client(current_action_);

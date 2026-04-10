@@ -31,6 +31,7 @@ from catalyst_interfaces.srv import JsonCommand
 from xarm.wrapper import XArmAPI
 
 from catalyst_execute.sdk_admittance import OnRobotFTReader
+from catalyst_execute.utils.execute_config import section
 from catalyst_execute.utils.ros2_control_manager import restart_ros2_control
 
 # xArm mode/state constants
@@ -39,26 +40,30 @@ XARM_MODE_CART_VELOCITY = 5
 XARM_STATE_START = 0
 XARM_STATE_STOP = 4
 
-SDK_CONTROL_SERVICE = '/sdk_control'
-
 
 class SdkControlService(Node):
     def __init__(self):
         super().__init__('sdk_control_service')
 
-        self.declare_parameter('robot_ip', '192.168.1.212')
-        self.declare_parameter('ft_sensor_ip', '192.168.2.1')
-        self.declare_parameter('rate', 100.0)
+        _cfg = section('sdk_control_service')
+        self.declare_parameter(
+            'robot_ip', _cfg.get('robot_ip', '192.168.1.212'))
+        self.declare_parameter(
+            'ft_sensor_ip', _cfg.get('ft_sensor_ip', '192.168.2.1'))
+        self.declare_parameter('rate', float(_cfg.get('rate', 100.0)))
+
+        self._sdk_service_name = _cfg.get('service_name', '/sdk_control')
 
         self._arm = None
         self._ft_reader = None
 
         self._cb_group = ReentrantCallbackGroup()
         self.create_service(
-            JsonCommand, SDK_CONTROL_SERVICE, self._handle_request,
+            JsonCommand, self._sdk_service_name, self._handle_request,
             callback_group=self._cb_group,
         )
-        self.get_logger().info(f'SDK control service ready on {SDK_CONTROL_SERVICE}')
+        self.get_logger().info(
+            f'SDK control service ready on {self._sdk_service_name}')
 
     # ── Request dispatcher ──
 
@@ -166,6 +171,7 @@ class SdkControlService(Node):
             force_deadzone: N (default: 1.0)
             compliant_axes: [x,y,z,rx,ry,rz] mask (default: [0,1,1,0,0,0])
             max_linear_vel: m/s (default: 0.05)
+            timeout_sec: optional wall-clock limit (loop exits, success false)
 
         Mode "corner_registration" params:
             ref_velocity: m/s, descent speed (default: -0.005)
@@ -346,6 +352,7 @@ class SdkControlService(Node):
         force_dz = cmd.get('force_deadzone', 1.0)
         compliant = np.array(cmd.get('compliant_axes', [0, 1, 1, 0, 0, 0]), dtype=float)
         max_lin_vel = cmd.get('max_linear_vel', 0.05)
+        timeout_sec = cmd.get('timeout_sec')
 
         code, start_pose = self._arm.get_position()
         if code != 0:
@@ -359,8 +366,12 @@ class SdkControlService(Node):
         cycle_count = 0
         reason = 'Interrupted'
         place_success = False
+        t_loop_start = time.monotonic()
 
         while rclpy.ok():
+            if timeout_sec is not None and (time.monotonic() - t_loop_start) > float(timeout_sec):
+                reason = f'Timeout after {float(timeout_sec):.1f}s'
+                break
             loop_start = time.monotonic()
             ft = self._ft_reader.get_ft()
 

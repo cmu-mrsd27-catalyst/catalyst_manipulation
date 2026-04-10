@@ -29,13 +29,7 @@ from tf2_ros import Buffer, TransformListener
 from catalyst_interfaces.srv import JsonCommand
 from xarm.wrapper import XArmAPI
 
-
-JOINT_NAMES = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
-BASE_FRAME = 'link_base'
-TCP_FRAME = 'link_tcp'
-
-JOINT_SERVICE = '/joint_command'
-CARTESIAN_SERVICE = '/cartesian_command'
+from catalyst_execute.utils.execute_config import section
 
 XARM_MODE_SERVO = 1
 XARM_MODE_TEACH = 2
@@ -47,42 +41,45 @@ class GuideModeNode(Node):
     def __init__(self):
         super().__init__('guide_mode')
 
-        self.declare_parameter('robot_ip', '192.168.1.212')
+        g = section('guide_mode')
+        self.declare_parameter(
+            'robot_ip', g.get('robot_ip', '192.168.1.212'))
         self._robot_ip = self.get_parameter('robot_ip').value
 
-        # Service clients for catalyst_motion_planner
-        self._joint_client = self.create_client(JsonCommand, JOINT_SERVICE)
-        self._cartesian_client = self.create_client(JsonCommand, CARTESIAN_SERVICE)
+        self._joint_names = list(g.get(
+            'joint_names',
+            ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']))
+        self._base_frame = g.get('base_frame', 'link_base')
+        self._tcp_frame = g.get('tcp_frame', 'link_tcp')
+        self._tcp_offset = list(g.get(
+            'tcp_offset_mm_deg', [154.6, 0.0, 124.3, 0.0, 0.0, 0.0]))
 
-        # TF2 for TCP pose
+        jc = g.get('joint_command_service', '/joint_command')
+        cc = g.get('cartesian_command_service', '/cartesian_command')
+        jst = g.get('joint_states_topic', '/joint_states')
+
+        self._joint_client = self.create_client(JsonCommand, jc)
+        self._cartesian_client = self.create_client(JsonCommand, cc)
+
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
 
-        # Latest joint states
         self._joint_positions = {}
-        self.create_subscription(
-            JointState, '/joint_states', self._joint_state_cb, 10
-        )
+        self.create_subscription(JointState, jst, self._joint_state_cb, 10)
 
-        # xArm SDK connection for mode switching
         self._arm = None
 
     def _joint_state_cb(self, msg):
         for name, pos in zip(msg.name, msg.position):
             self._joint_positions[name] = pos
 
-    # TCP offset from link_eef (flange) to link_tcp (gripper tip)
-    # F/T sensor: 68mm Z + gripper TCP: 154.6mm X, 56.3mm Z
-    # In xArm SDK frame: [x, y, z, roll, pitch, yaw] in mm and degrees
-    TCP_OFFSET = [154.6, 0, 124.3, 0, 0, 0]
-
     def connect_arm(self):
         """Connect to xArm via Python SDK."""
         self.get_logger().info(f'Connecting to xArm at {self._robot_ip}...')
         try:
             self._arm = XArmAPI(self._robot_ip)
-            self._arm.set_tcp_offset(self.TCP_OFFSET)
-            self.get_logger().info(f'TCP offset set to {self.TCP_OFFSET}')
+            self._arm.set_tcp_offset(self._tcp_offset)
+            self.get_logger().info(f'TCP offset set to {self._tcp_offset}')
             self.get_logger().info('Connected to xArm.')
             return True
         except Exception as e:
@@ -180,11 +177,11 @@ class GuideModeNode(Node):
         # joint_state_broadcaster is auto-deactivated in teach mode, so
         # /joint_states may not be updating.  Use SDK as fallback.
         positions = {}
-        for name in JOINT_NAMES:
+        for name in self._joint_names:
             if name in self._joint_positions:
                 positions[name] = self._joint_positions[name]
 
-        if len(positions) == len(JOINT_NAMES):
+        if len(positions) == len(self._joint_names):
             return positions
 
         # Fallback: read directly from xArm SDK
@@ -193,7 +190,7 @@ class GuideModeNode(Node):
             if code == 0 and len(angles) >= 6:
                 return {
                     name: math.radians(angles[i])
-                    for i, name in enumerate(JOINT_NAMES)
+                    for i, name in enumerate(self._joint_names)
                 }
             self.get_logger().warn(f'SDK get_servo_angle failed (code={code})')
 
@@ -203,7 +200,8 @@ class GuideModeNode(Node):
     def get_tcp_pose(self):
         """Get TCP pose — try TF first, fall back to SDK."""
         try:
-            t = self._tf_buffer.lookup_transform(BASE_FRAME, TCP_FRAME, rclpy.time.Time())
+            t = self._tf_buffer.lookup_transform(
+                self._base_frame, self._tcp_frame, rclpy.time.Time())
             tr = t.transform.translation
             rot = t.transform.rotation
             return {
@@ -306,9 +304,10 @@ def main():
             if choice == '1':
                 joints = node.get_joint_positions()
                 if joints:
-                    deg_list = [round(math.degrees(joints[j]), 2) for j in JOINT_NAMES]
+                    deg_list = [
+                        round(math.degrees(joints[j]), 2) for j in node._joint_names]
                     print('\nJoint positions:')
-                    print(f'  Radians: {[f"{joints[j]:.4f}" for j in JOINT_NAMES]}')
+                    print(f'  Radians: {[f"{joints[j]:.4f}" for j in node._joint_names]}')
                     print(f'  Degrees: {deg_list}')
                     cmd = {'joints': deg_list, 'speed': 0.2}
                     print(f'\n  /joint_command JSON: {json.dumps(cmd)}')
@@ -320,7 +319,7 @@ def main():
             elif choice == '2':
                 pose = node.get_tcp_pose()
                 if pose:
-                    print(f'\nTCP pose ({BASE_FRAME} -> {TCP_FRAME}):')
+                    print(f'\nTCP pose ({node._base_frame} -> {node._tcp_frame}):')
                     print(f'  Position:    x={pose["x"]:.4f}  y={pose["y"]:.4f}  z={pose["z"]:.4f}  (meters)')
                     print(f'  Quaternion:  qx={pose["qx"]:.4f}  qy={pose["qy"]:.4f}  qz={pose["qz"]:.4f}  qw={pose["qw"]:.4f}')
                     sj = {k: round(v, 4) for k, v in pose.items()}

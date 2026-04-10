@@ -30,6 +30,7 @@ setup(
         'console_scripts': [
             'pointcloud_filter = catalyst_vision.pointcloud_filter:main',
             'detection_client = catalyst_vision.detection_client:main',
+            'capture_images = catalyst_vision.capture_images:main',
         ],
     },
 )

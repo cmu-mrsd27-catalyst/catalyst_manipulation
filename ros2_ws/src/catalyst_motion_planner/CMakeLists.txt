@@ -17,6 +17,7 @@ find_package(geometric_shapes REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
 
 add_executable(motion_planner src/motion_planner_node.cpp)
 target_compile_features(motion_planner PUBLIC cxx_std_17)
@@ -29,6 +30,7 @@ ament_target_dependencies(
   sensor_msgs
   std_srvs
   moveit_msgs
+  controller_manager_msgs
 )
 # xArm SDK (for guide/teach mode)
 target_include_directories(motion_planner PRIVATE

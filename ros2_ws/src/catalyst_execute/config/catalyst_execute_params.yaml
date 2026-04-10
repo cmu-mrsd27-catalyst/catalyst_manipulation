@@ -1,0 +1,266 @@
+# Default parameters for catalyst_execute (loaded at runtime by execute_config.section).
+# Edit installed copy under share/catalyst_execute/config/ or this source file.
+
+sdk_control_service:
+  service_name: "/sdk_control"
+  robot_ip: "192.168.1.212"
+  ft_sensor_ip: "192.168.2.1"
+  rate: 100.0
+
+guide_mode:
+  robot_ip: "192.168.1.212"
+  joint_command_service: "/joint_command"
+  cartesian_command_service: "/cartesian_command"
+  joint_states_topic: "/joint_states"
+  joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+  base_frame: "link_base"
+  tcp_frame: "link_tcp"
+  # TCP offset [x,y,z, roll, pitch, yaw] mm and degrees for xArm SDK
+  tcp_offset_mm_deg: [154.6, 0.0, 124.3, 0.0, 0.0, 0.0]
+
+service_clients:
+  joint_command: "/joint_command"
+  cartesian_command: "/cartesian_command"
+  gripper_command: "/gripper_command"
+  guide_mode: "/guide_mode"
+  sdk_control: "/sdk_control"
+  compute_poses: "/compute_poses"
+  set_octomap_enabled: "/set_octomap_enabled"
+  clear_octomap: "/clear_octomap"
+  set_collision_sensitivity: "/set_collision_sensitivity"
+  set_eef_bounds: "/set_eef_bounds"
+  scene_command: "/scene_command"
+  wait_for_services_timeout_sec: 30.0
+  # allow_object_default_collisions (ACM) can lag when move_group is busy; short timeouts fail open.
+  scene_command_timeout_sec: 60.0
+  scene_command_max_retries: 4
+
+compute_poses:
+  service_name: "/compute_poses"
+  gripper_pose_file: "gripper_pose.json"
+  # Extra shift to pick TCP pose in link_base Z (m); 0 = use tag-derived pose only
+  pick_grasp_offset_z_m: 0.0
+  # approach y = tag_y + offset (m); x,z,quat match pick/place; z also +pre_height like pre_pick/pre_place
+  approach_tag_y_offset_m: -0.05
+  pre_height: 0.05
+  # Added to nominal pre-place x,y in link_base (m). Matches place-on-robot YAML pre_place.
+  pre_place_planar_offset_x_m: 0.015
+  pre_place_planar_offset_y_m: -0.015
+  correction_dx: -3.0
+  correction_dy: 5.0
+  correction_dz: 5.0
+  default_cartesian_speed: 0.1
+  position_move_speed: 5
+  position_move_tolerance: 0.5
+
+exploration:
+  # Start pose before joint1 sweep (deg). Rad: [1.777192, -1.115486, -0.336843, 3.073123, -0.760977, 3.295532]
+  explore_joints_deg: [101.8256, -63.9126, -19.2997, 176.077, -43.6008, 188.82]
+  # joint1 sweep: same ±offsets from nominal j1 as prior cal (was 84..128 vs j1≈93.85°)
+  sweep_start: 91.9783
+  sweep_end: 135.9783
+  sweep_step: 10.0
+  default_tag_frame: "tag_liquid_handler"
+  default_move_speed: 0.1
+  settle_time: 0.5
+  fresh_read_timeout: 2.0
+  joint_move_timeout_sec: 30.0
+
+pick_action_server:
+  action_name: "/pick"
+  # Pause after prior joint move (e.g. BT home) before first cartesian — helps MoveIt / controller start state match hardware.
+  start_settle_sec: 0.8
+  robot_phase_topic: "/robot_phase"
+  phase_pub_queue_size: 10
+  guide_mode_settle_sec: 2.0
+  post_guide_settle_sec: 3.0
+  guide_mode_max_retries: 5
+  guide_mode_retry_sleep_sec: 0.5
+  default_pick_speed: 0.01
+  move_timeout_sec: 60.0
+  # After each successful /cartesian_command (MoveIt execute) segment.
+  motion_settle_sec: 0.5
+  sleep_after_open_gripper_sec: 0.5
+  sleep_after_close_gripper_sec: 1.0
+  compute_poses_timeout_sec: 10.0
+
+place_action_server:
+  action_name: "/place"
+  start_settle_sec: 0.8
+  robot_phase_topic: "/robot_phase"
+  phase_pub_queue_size: 10
+  default_contact_force_threshold: 1.0
+  default_corner_force_threshold: 2.0
+  default_descent_force_threshold: 7.0
+  default_descent_speed: -5.0
+  default_search_speed: 0.003
+  default_ref_velocity: -0.005
+  sdk_cleanup_timeout_sec: 30.0
+  sdk_connect_timeout_sec: 30.0
+  corner_registration_timeout_sec: 120.0
+  position_correction_timeout_sec: 30.0
+  force_descent_timeout_sec: 60.0
+  restart_controllers_timeout_sec: 60.0
+  wait_moveit_services_timeout_sec: 30.0
+  move_cartesian_timeout_sec: 60.0
+  # After each cartesian segment and after each SDK arm-motion segment (corner / correction / descent).
+  motion_settle_sec: 0.5
+  sleep_after_release_sec: 0.5
+  sleep_after_restart_sec: 1.0
+  corner_registration_max_distance: 0.1
+
+# Robot-side container (hardcoded link_base poses; see test_container_place.py)
+robot_container_place_action_server:
+  action_name: "/place_on_robot"
+  robot_phase_topic: "/robot_phase"
+  phase_pub_queue_size: 10
+  start_settle_sec: 0.8
+  motion_settle_sec: 0.5
+  joint_home_speed: 0.1
+  down_right:
+    x: 0.282141
+    y: -0.39385
+    z: 0.131813
+    qx: 0.891616
+    qy: -0.452659
+    qz: 0.008891
+    qw: -0.00655
+    speed: 0.1
+  # pre_place: TCP 5 cm above place_container (link_base), after down_right
+  pre_place:
+    x: 0.169574
+    y: 0.09149
+    z: 0.131231
+    qx: 0.706609
+    qy: 0.707579
+    qz: 0.005009
+    qw: -0.003106
+    speed: 0.1
+  # place_container TCP (nominal); descent is SDK admittance from pre_place
+  place_container:
+    x: 0.169574
+    y: 0.09149
+    z: 0.081231
+    qx: 0.706609
+    qy: 0.707579
+    qz: 0.005009
+    qw: -0.003106
+    speed: 0.05
+  default_contact_force_threshold: 1.0
+  default_corner_force_threshold: 1.0
+  default_descent_force_threshold: 5.0
+  default_descent_speed: -5.0
+  default_search_speed: 0.003
+  default_ref_velocity: -0.005
+  # simple_admittance (tool-frame VC + F/T); goal JSON can override ref_velocity / descent_force_threshold
+  admittance_rate: 100.0
+  admittance_linear_gain: 0.005
+  admittance_force_deadzone: 1.0
+  admittance_max_linear_vel: 0.05
+  admittance_max_distance: 0.1
+  admittance_compliant_axes: [0, 1, 1, 0, 0, 0]
+  admittance_timeout_sec: 120.0
+  sdk_cleanup_timeout_sec: 30.0
+  sdk_connect_timeout_sec: 30.0
+  corner_registration_timeout_sec: 120.0
+  position_correction_timeout_sec: 30.0
+  force_descent_timeout_sec: 60.0
+  restart_controllers_timeout_sec: 60.0
+  wait_moveit_services_timeout_sec: 30.0
+  move_cartesian_timeout_sec: 60.0
+  sleep_after_release_sec: 0.5
+  sleep_after_restart_sec: 1.0
+  corner_registration_max_distance: 0.1
+  # After release: SDK vertical lift (+Z in base frame, mm) before MoveIt restart
+  sdk_post_release_z_lift_mm: 50.0
+  sdk_pre_place_retract_speed_mm_s: 30.0
+  sdk_pre_place_retract_tolerance_mm: 1.0
+  sdk_pre_place_retract_timeout_sec: 120.0
+  # Planning-scene collision object id (see planning_scene_static_objects / world_objects)
+  workspace_collision_object_id: "workspace_box"
+  workspace_box_remove_verify_max_rounds: 8
+  workspace_box_remove_verify_pause_sec: 0.3
+  workspace_box_restore_collision:
+    frame_id: link_base
+    position: [0.175, 0.075, 0.04]
+    orientation: [0.0, 0.0, 0.0, 1.0]
+    dimensions: [0.14, 0.10, 0.08]
+
+robot_container_pick_action_server:
+  action_name: "/pick_from_robot_container"
+  robot_phase_topic: "/robot_phase"
+  phase_pub_queue_size: 10
+  start_settle_sec: 0.8
+  motion_settle_sec: 0.5
+  joint_home_speed: 0.1
+  default_pick_speed: 0.01
+  move_timeout_sec: 60.0
+  guide_mode_settle_sec: 2.0
+  post_guide_settle_sec: 3.0
+  guide_mode_max_retries: 5
+  guide_mode_retry_sleep_sec: 0.5
+  sleep_after_open_gripper_sec: 0.5
+  sleep_after_close_gripper_sec: 1.0
+  down_right:
+    x: 0.282141
+    y: -0.39385
+    z: 0.131813
+    qx: 0.891616
+    qy: -0.452659
+    qz: 0.008891
+    qw: -0.00655
+    speed: 0.1
+  # Match robot_container_place pre_place / place_container (pick is inverse motion)
+  pre_pick:
+    x: 0.169574
+    y: 0.09149
+    z: 0.131231
+    qx: 0.706609
+    qy: 0.707579
+    qz: 0.005009
+    qw: -0.003106
+    speed: 0.1
+  pick_pose:
+    x: 0.169574
+    y: 0.09149
+    z: 0.081231
+    qx: 0.706609
+    qy: 0.707579
+    qz: 0.005009
+    qw: -0.003106
+    speed: 0.05
+  workspace_collision_object_id: "workspace_box"
+  # Verified via /scene_command list after each remove
+  workspace_box_remove_verify_max_rounds: 8
+  workspace_box_remove_verify_pause_sec: 0.3
+  # Removed from scene after pre_pick, re-added after retract (sync with planning_scene_static_objects.yaml)
+  workspace_box_restore_collision:
+    frame_id: link_base
+    position: [0.175, 0.075, 0.04]
+    orientation: [0.0, 0.0, 0.0, 1.0]
+    dimensions: [0.14, 0.10, 0.08]
+
+explore_action_server:
+  action_name: "/explore"
+  world_model_topic: "/world_model"
+  joint_command_service: "/joint_command"
+  robot_phase_topic: "/robot_phase"
+  world_model_queue_size: 10
+  phase_pub_queue_size: 10
+  joint_service_wait_sec: 10.0
+  default_tag_frame: "tag_liquid_handler"
+  default_move_speed: 0.1
+  # When true, after a successful sweep the action result uses testing_tag_pose_in_base
+  # instead of the pose from /world_model (for approach-pick / compute_poses testing).
+  testing_override_tag_pose_after_explore: false
+  # tag_liquid_handler (id 14) in link_base — sync with find_tcp_pose_wrt_tag / gripper_pose.json
+  testing_tag_pose_in_base:
+    position:
+      x: -0.073853
+      y: 0.475906
+      z: 0.024722
+    orientation:
+      qx: 0.019612
+      qy: -0.441784
+      qz: 0.896861
+      qw: 0.009113

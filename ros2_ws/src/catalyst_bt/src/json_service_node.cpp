@@ -1,5 +1,8 @@
 #include "catalyst_bt/json_service_node.hpp"
 
+#include <chrono>
+#include <thread>
+
 namespace catalyst_bt {
 
 JsonServiceNode::JsonServiceNode(
@@ -103,7 +106,7 @@ BT::NodeStatus JsonServiceNode::tick() {
         std::chrono::milliseconds(static_cast<int64_t>(timeout * 1000));
 
     while (rclcpp::ok()) {
-        rclcpp::spin_some(ros_node_);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         if (future.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready) {
             break;
         }

@@ -98,3 +98,8 @@ ros2 service call /gripper_command catalyst_interfaces/srv/JsonCommand "{command
 
 - `catalyst_interfaces` — Custom service definition (`JsonCommand.srv`)
 - `dynamixel-sdk` — Robotis Dynamixel SDK (`pip3 install dynamixel-sdk`)
+
+## See also
+
+- [catalyst_bringup README](../catalyst_bringup/README.md) — starts this node in real `demo.launch.py`
+- [Repository README](../../../README.md) — full stack commands

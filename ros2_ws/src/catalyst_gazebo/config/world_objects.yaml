@@ -103,6 +103,21 @@ robot:
     yaw: 0.0         # Facing +X direction
 
 # -----------------------------------------------------------------------------
+# Planning scene (link_base): extra collision box for MoveIt / scene_manager
+# (same semantics as catalyst_moveit_config/config/planning_scene_static_objects.yaml)
+# -----------------------------------------------------------------------------
+link_base_boxes:
+  - id: workspace_box
+    size:
+      x: 0.14
+      y: 0.10
+      z: 0.08
+    position:
+      x: 0.175
+      y: 0.075
+      z: 0.04
+
+# -----------------------------------------------------------------------------
 # Ground Plane
 # -----------------------------------------------------------------------------
 ground:

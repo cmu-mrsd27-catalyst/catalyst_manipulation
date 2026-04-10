@@ -14,4 +14,5 @@ docker run -it \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v /dev:/dev \
   -v ./ros2_ws:/root/ros2_ws \
+  -e CATALYST_WORLD_MODEL_YAML=/root/ros2_ws/src/catalyst_world_model/config/world_model.yaml \
   ros2_jazzy

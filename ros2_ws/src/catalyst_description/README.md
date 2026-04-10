@@ -34,7 +34,7 @@ catalyst_description/
 ### Visualize the Robot
 
 ```bash
-cd ~/catalyst_repo_jazzy/catalyst-manipulation/ros2_ws
+cd <workspace>/ros2_ws
 colcon build --packages-select catalyst_description
 source install/setup.bash
 

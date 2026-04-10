@@ -11,6 +11,7 @@
 
   <!-- Runtime dependencies -->
   <exec_depend>catalyst_description</exec_depend>
+  <exec_depend>catalyst_motion_planner</exec_depend>
   <exec_depend>moveit_ros_move_group</exec_depend>
   <exec_depend>moveit_ros_planning_interface</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>

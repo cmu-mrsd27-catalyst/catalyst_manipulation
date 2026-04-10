@@ -13,6 +13,7 @@ find_package(std_srvs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_executable(bt_executor
   src/bt_executor_node.cpp
@@ -20,6 +21,7 @@ add_executable(bt_executor
   src/set_bool_service_node.cpp
   src/empty_service_node.cpp
   src/task_action_node.cpp
+  src/system_healthy_node.cpp
 )
 target_compile_features(bt_executor PUBLIC cxx_std_17)
 target_include_directories(bt_executor PUBLIC
@@ -32,6 +34,7 @@ ament_target_dependencies(bt_executor
   catalyst_interfaces
   std_srvs
   ament_index_cpp
+  std_msgs
 )
 target_link_libraries(bt_executor nlohmann_json::nlohmann_json)
 

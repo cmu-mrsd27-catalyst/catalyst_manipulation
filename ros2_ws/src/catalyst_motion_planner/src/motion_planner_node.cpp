@@ -1,14 +1,20 @@
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/qos.hpp>
 #include <moveit/move_group_interface/move_group_interface.hpp>
 #include <moveit/planning_scene_interface/planning_scene_interface.hpp>
 #include <moveit_msgs/msg/orientation_constraint.hpp>
+#include <moveit_msgs/msg/position_constraint.hpp>
 #include <moveit_msgs/msg/constraints.hpp>
+#include <shape_msgs/msg/solid_primitive.hpp>
 #include <moveit_msgs/msg/planning_scene.hpp>
 #include <moveit_msgs/srv/apply_planning_scene.hpp>
 #include <moveit_msgs/srv/get_planning_scene.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <catalyst_interfaces/srv/json_command.hpp>
 #include <std_srvs/srv/set_bool.hpp>
+#include <std_srvs/srv/empty.hpp>
+#include <controller_manager_msgs/srv/list_controllers.hpp>
+#include <controller_manager_msgs/srv/switch_controller.hpp>
 #include <nlohmann/json.hpp>
 
 #include <moveit/robot_state/robot_state.hpp>
@@ -16,12 +22,14 @@
 #include <xarm/wrapper/xarm_api.h>
 #include <thread>
 #include <chrono>
+#include <future>
 #include <cmath>
 #include <algorithm>
 #include <string>
 #include <vector>
 #include <atomic>
 #include <limits>
+#include <optional>
 #include <cstdlib>
 
 using json = nlohmann::json;
@@ -35,6 +43,132 @@ const std::string CONSTRAINT_LINK = "link_eef";  // last link in xarm6 group —
 const std::vector<std::string> JOINT_NAMES = {
     "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"
 };
+
+const char * const kArmTrajController = "xarm6_traj_controller";
+const char * const kAdmittanceController = "admittance_controller";
+const char * const kJointStateBroadcaster = "joint_state_broadcaster";
+const char * const kFtBroadcaster = "force_torque_sensor_broadcaster";
+
+/** UFactory xArm HW reports state 5 (CONFIG_CHANGED) after SDK calls like set_collision_sensitivity;
+ *  the HW plugin then deactivates traj + broadcasters. MoveIt still plans; execute rejects goals.
+ *  Reactivate traj and (if present) joint_state + FT broadcasters after CM recovers from overruns. */
+static void ensure_xarm6_traj_controller_active(
+    const rclcpp::Client<controller_manager_msgs::srv::ListControllers>::SharedPtr & list_cli,
+    const rclcpp::Client<controller_manager_msgs::srv::SwitchController>::SharedPtr & switch_cli,
+    const rclcpp::Logger & logger)
+{
+    if (!list_cli->service_is_ready()) {
+        if (!list_cli->wait_for_service(std::chrono::seconds(2))) {
+            return;
+        }
+    }
+
+    controller_manager_msgs::srv::ListControllers::Response::SharedPtr list_resp;
+    bool list_ok = false;
+    for (int attempt = 0; attempt < 3 && rclcpp::ok(); ++attempt) {
+        if (attempt > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        }
+        auto list_req = std::make_shared<controller_manager_msgs::srv::ListControllers::Request>();
+        auto list_future = list_cli->async_send_request(list_req);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        bool got = false;
+        while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
+            if (list_future.wait_for(std::chrono::milliseconds(20)) == std::future_status::ready) {
+                list_resp = list_future.get();
+                got = true;
+                list_ok = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        if (got) {
+            break;
+        }
+        RCLCPP_WARN(
+            logger,
+            "ensure_xarm6_traj: list_controllers timed out (attempt %d/3) — controller_manager slow or client/executor deadlock",
+            attempt + 1);
+    }
+    if (!list_ok || !list_resp) {
+        return;
+    }
+    bool traj_active = false;
+    bool js_active = false;
+    bool ft_in_list = false;
+    bool ft_active = false;
+    bool admittance_active = false;
+    for (const auto & c : list_resp->controller) {
+        if (c.name == kArmTrajController && c.state == "active") {
+            traj_active = true;
+        }
+        if (c.name == kJointStateBroadcaster && c.state == "active") {
+            js_active = true;
+        }
+        if (c.name == kFtBroadcaster) {
+            ft_in_list = true;
+            ft_active = (c.state == "active");
+        }
+        if (c.name == kAdmittanceController && c.state == "active") {
+            admittance_active = true;
+        }
+    }
+    const bool need_ft = ft_in_list && !ft_active;
+    if (traj_active && js_active && !need_ft) {
+        return;
+    }
+
+    RCLCPP_WARN(
+        logger,
+        "Arm stack not fully active (traj=%d joint_state_broadcaster=%d ft_broadcaster=%d) — switching so MoveIt can execute",
+        traj_active ? 1 : 0,
+        js_active ? 1 : 0,
+        (ft_in_list && ft_active) ? 1 : (ft_in_list ? 0 : -1));
+
+    if (!switch_cli->wait_for_service(std::chrono::seconds(5))) {
+        RCLCPP_ERROR(logger, "controller_manager/switch_controller not available");
+        return;
+    }
+
+    auto sw_req = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
+    if (admittance_active) {
+        sw_req->deactivate_controllers.push_back(kAdmittanceController);
+    }
+    if (!traj_active) {
+        sw_req->activate_controllers.push_back(kArmTrajController);
+    }
+    if (!js_active) {
+        sw_req->activate_controllers.push_back(kJointStateBroadcaster);
+    }
+    if (need_ft) {
+        sw_req->activate_controllers.push_back(kFtBroadcaster);
+    }
+    sw_req->strictness =
+        controller_manager_msgs::srv::SwitchController::Request::BEST_EFFORT;
+    sw_req->activate_asap = true;
+
+    auto sw_future = switch_cli->async_send_request(sw_req);
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
+            if (sw_future.wait_for(std::chrono::milliseconds(20)) == std::future_status::ready) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    if (sw_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        RCLCPP_WARN(logger, "ensure_xarm6_traj: switch_controller timed out");
+        return;
+    }
+    auto sw_resp = sw_future.get();
+    if (sw_resp->ok) {
+        RCLCPP_INFO(logger, "Re-activated arm controllers for trajectory execution");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    } else {
+        RCLCPP_WARN(logger, "switch_controller returned ok=false");
+    }
+}
 
 int main(int argc, char** argv)
 {
@@ -84,8 +218,8 @@ int main(int argc, char** argv)
 
     arm.setPoseReferenceFrame(BASE_FRAME);
     arm.setEndEffectorLink(EE_LINK);
-    arm.setPlanningTime(10.0);
-    arm.setNumPlanningAttempts(5);
+    arm.setPlanningTime(5.0);
+    arm.setNumPlanningAttempts(3);
 
     RCLCPP_INFO(logger, "MoveGroupInterface ready for '%s'", PLANNING_GROUP_ARM.c_str());
 
@@ -124,38 +258,58 @@ int main(int argc, char** argv)
         }
     }
 
+    auto get_planning_scene_client =
+        service_node->create_client<moveit_msgs::srv::GetPlanningScene>("/get_planning_scene");
+
     // ===================== Set Octomap Enabled Service =====================
     auto set_octomap_service = service_node->create_service<std_srvs::srv::SetBool>(
         "/set_octomap_enabled",
-        [&planning_scene_interface, &cached_acm, &logger](
+        [&planning_scene_interface, &cached_acm, &logger, get_planning_scene_client](
             const std_srvs::srv::SetBool::Request::SharedPtr request,
             std_srvs::srv::SetBool::Response::SharedPtr response)
         {
-            if (cached_acm.entry_names.empty()) {
-                RCLCPP_ERROR(logger, "No cached ACM available — cannot toggle octomap");
-                response->success = false;
-                response->message = "No cached ACM";
-                return;
+            moveit_msgs::msg::AllowedCollisionMatrix acm;
+
+            if (get_planning_scene_client->wait_for_service(std::chrono::seconds(2))) {
+                auto get_req = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+                get_req->components.components = 128;  // ALLOWED_COLLISION_MATRIX
+                auto future = get_planning_scene_client->async_send_request(get_req);
+                if (future.wait_for(std::chrono::seconds(5)) == std::future_status::ready) {
+                    auto scene_resp = future.get();
+                    if (scene_resp &&
+                        !scene_resp->scene.allowed_collision_matrix.entry_names.empty()) {
+                        acm = scene_resp->scene.allowed_collision_matrix;
+                    }
+                }
             }
 
-            // Update <octomap> default entry in the cached ACM
+            if (acm.entry_names.empty()) {
+                if (cached_acm.entry_names.empty()) {
+                    RCLCPP_ERROR(logger, "No ACM available — cannot toggle octomap");
+                    response->success = false;
+                    response->message = "No ACM available";
+                    return;
+                }
+                acm = cached_acm;
+            }
+
+            // Merge <octomap> default entry into the live ACM (preserves e.g. workspace_box entries).
             bool found = false;
-            for (size_t i = 0; i < cached_acm.default_entry_names.size(); ++i) {
-                if (cached_acm.default_entry_names[i] == "<octomap>") {
-                    cached_acm.default_entry_values[i] = !request->data;
+            for (size_t i = 0; i < acm.default_entry_names.size(); ++i) {
+                if (acm.default_entry_names[i] == "<octomap>") {
+                    acm.default_entry_values[i] = !request->data;
                     found = true;
                     break;
                 }
             }
             if (!found) {
-                cached_acm.default_entry_names.push_back("<octomap>");
-                cached_acm.default_entry_values.push_back(!request->data);
+                acm.default_entry_names.push_back("<octomap>");
+                acm.default_entry_values.push_back(!request->data);
             }
 
-            // Apply the full ACM (entry_names is populated so the diff guard passes)
             moveit_msgs::msg::PlanningScene ps;
             ps.is_diff = true;
-            ps.allowed_collision_matrix = cached_acm;
+            ps.allowed_collision_matrix = acm;
 
             if (!request->data) {
                 RCLCPP_INFO(logger, "Octomap DISABLED for planning (collisions allowed)");
@@ -164,6 +318,9 @@ int main(int argc, char** argv)
             }
 
             bool ok = planning_scene_interface.applyPlanningScene(ps);
+            if (ok) {
+                cached_acm = acm;
+            }
             response->success = ok;
             response->message = ok
                 ? (request->data ? "Octomap enabled" : "Octomap disabled")
@@ -201,13 +358,132 @@ int main(int argc, char** argv)
         }
     }
 
+    // Flag set by /stop_motion — checked in all motion retry loops
+    std::atomic<bool> stop_requested{false};
+
+    // ── EEF bounds (PositionConstraint on CONSTRAINT_LINK = link_eef) ──
+    struct EefBounds {
+        std::mutex mutex;
+        bool active = false;
+        double x_min = 0, x_max = 0;
+        double z_min = 0, z_max = 0;
+        // Y is unconstrained — use large range
+    };
+    EefBounds eef_bounds;
+
+    // Helper: apply or clear EEF bounds as path constraint
+    auto apply_eef_bounds = [&arm, &eef_bounds, &logger]() {
+        std::lock_guard<std::mutex> lock(eef_bounds.mutex);
+        if (!eef_bounds.active) {
+            // Don't clear here — keep_orientation sets its own constraints
+            return;
+        }
+        // Build a box constraint for link_eef (last link in xarm6 group) in link_base frame
+        moveit_msgs::msg::PositionConstraint pc;
+        pc.header.frame_id = BASE_FRAME;
+        pc.link_name = CONSTRAINT_LINK;
+        pc.weight = 1.0;
+
+        // Box primitive
+        shape_msgs::msg::SolidPrimitive box;
+        box.type = shape_msgs::msg::SolidPrimitive::BOX;
+        box.dimensions = {
+            eef_bounds.x_max - eef_bounds.x_min,  // X size
+            2.0,                                    // Y size (unconstrained)
+            eef_bounds.z_max - eef_bounds.z_min,   // Z size
+        };
+
+        // Box center pose
+        geometry_msgs::msg::Pose box_pose;
+        box_pose.position.x = (eef_bounds.x_min + eef_bounds.x_max) / 2.0;
+        box_pose.position.y = 0.0;  // centered at origin Y
+        box_pose.position.z = (eef_bounds.z_min + eef_bounds.z_max) / 2.0;
+        box_pose.orientation.w = 1.0;
+
+        pc.constraint_region.primitives.push_back(box);
+        pc.constraint_region.primitive_poses.push_back(box_pose);
+
+        moveit_msgs::msg::Constraints constraints;
+        constraints.position_constraints.push_back(pc);
+        arm.setPathConstraints(constraints);
+
+        RCLCPP_INFO(logger, "EEF bounds applied: X[%.3f, %.3f] Z[%.3f, %.3f]",
+                    eef_bounds.x_min, eef_bounds.x_max,
+                    eef_bounds.z_min, eef_bounds.z_max);
+    };
+
+    auto clear_eef_bounds = [&arm]() {
+        arm.clearPathConstraints();
+    };
+
+    // Helper: build a PositionConstraint if bounds are active (caller must hold lock)
+    auto build_position_constraint = [&eef_bounds]() -> std::optional<moveit_msgs::msg::PositionConstraint> {
+        if (!eef_bounds.active) return std::nullopt;
+
+        moveit_msgs::msg::PositionConstraint pc;
+        pc.header.frame_id = BASE_FRAME;
+        pc.link_name = CONSTRAINT_LINK;
+        pc.weight = 1.0;
+
+        shape_msgs::msg::SolidPrimitive box;
+        box.type = shape_msgs::msg::SolidPrimitive::BOX;
+        box.dimensions = {
+            eef_bounds.x_max - eef_bounds.x_min,
+            2.0,
+            eef_bounds.z_max - eef_bounds.z_min,
+        };
+
+        geometry_msgs::msg::Pose box_pose;
+        box_pose.position.x = (eef_bounds.x_min + eef_bounds.x_max) / 2.0;
+        box_pose.position.y = 0.0;
+        box_pose.position.z = (eef_bounds.z_min + eef_bounds.z_max) / 2.0;
+        box_pose.orientation.w = 1.0;
+
+        pc.constraint_region.primitives.push_back(box);
+        pc.constraint_region.primitive_poses.push_back(box_pose);
+        return pc;
+    };
+
+    // Helper: apply orientation + optional EEF bounds as combined path constraints
+    auto apply_combined_constraints = [&arm, &eef_bounds, &build_position_constraint](
+            const moveit_msgs::msg::Constraints& base_constraints) {
+        std::lock_guard<std::mutex> lock(eef_bounds.mutex);
+        auto pc = build_position_constraint();
+        if (pc) {
+            auto combined = base_constraints;
+            combined.position_constraints.push_back(*pc);
+            arm.setPathConstraints(combined);
+        } else {
+            arm.setPathConstraints(base_constraints);
+        }
+    };
+
+    /* Clients must NOT use the default callback group: /joint_command and
+     * /cartesian_command block on wait_for(future). Service callbacks and client
+     * responses in the same mutually exclusive group deadlock — futures never complete. */
+    auto cm_clients_cb_group =
+        service_node->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    auto list_ctrl_client =
+        service_node->create_client<controller_manager_msgs::srv::ListControllers>(
+            "/controller_manager/list_controllers",
+            rclcpp::ServicesQoS(),
+            cm_clients_cb_group);
+    auto switch_ctrl_client =
+        service_node->create_client<controller_manager_msgs::srv::SwitchController>(
+            "/controller_manager/switch_controller",
+            rclcpp::ServicesQoS(),
+            cm_clients_cb_group);
+
     // ===================== Joint Service =====================
     auto joint_service = service_node->create_service<JsonCommand>(
         "/joint_command",
-        [&arm, &logger](
+        [&arm, &logger, &stop_requested, &apply_eef_bounds, &clear_eef_bounds,
+         list_ctrl_client, switch_ctrl_client](
             const JsonCommand::Request::SharedPtr request,
             JsonCommand::Response::SharedPtr response)
         {
+            stop_requested.store(false);  // clear flag at start of new motion
+            ensure_xarm6_traj_controller_active(list_ctrl_client, switch_ctrl_client, logger);
             try {
                 auto cmd = json::parse(request->command);
 
@@ -249,16 +525,30 @@ int main(int argc, char** argv)
                 arm.setMaxVelocityScalingFactor(speed);
                 arm.setMaxAccelerationScalingFactor(speed);
 
+                // Apply EEF bounds if active
+                apply_eef_bounds();
+
                 // Plan and execute with retry on validation failure
                 const int MAX_RETRIES = 5;
                 bool succeeded = false;
                 for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                    if (stop_requested.load()) {
+                        clear_eef_bounds();
+                        response->response = json({{"success", false},
+                            {"message", "Motion stopped by /stop_motion"}}).dump();
+                        return;
+                    }
                     auto move_result = arm.move();
                     if (move_result == moveit::core::MoveItErrorCode::SUCCESS) {
                         response->response = json({{"success", true},
                             {"message", "Joint motion succeeded"}}).dump();
                         succeeded = true;
                         break;
+                    }
+                    if (stop_requested.load()) {
+                        response->response = json({{"success", false},
+                            {"message", "Motion stopped by /stop_motion"}}).dump();
+                        return;
                     }
                     RCLCPP_WARN(logger, "Joint move attempt %d/%d failed (code %d), retrying...",
                                 attempt, MAX_RETRIES, move_result.val);
@@ -267,8 +557,10 @@ int main(int argc, char** argv)
                     response->response = json({{"success", false},
                         {"message", "Joint motion failed after " + std::to_string(MAX_RETRIES) + " attempts"}}).dump();
                 }
+                clear_eef_bounds();
 
             } catch (const std::exception& e) {
+                clear_eef_bounds();
                 response->response = json({{"success", false},
                     {"message", std::string("Error: ") + e.what()}}).dump();
             }
@@ -278,10 +570,14 @@ int main(int argc, char** argv)
     // ===================== Cartesian Service =====================
     auto cartesian_service = service_node->create_service<JsonCommand>(
         "/cartesian_command",
-        [&arm, &logger, &flat_orientation](
+        [&arm, &logger, &flat_orientation, &stop_requested,
+         &apply_eef_bounds, &clear_eef_bounds, &apply_combined_constraints,
+         list_ctrl_client, switch_ctrl_client](
             const JsonCommand::Request::SharedPtr request,
             JsonCommand::Response::SharedPtr response)
         {
+            stop_requested.store(false);  // clear flag at start of new motion
+            ensure_xarm6_traj_controller_active(list_ctrl_client, switch_ctrl_client, logger);
             try {
                 auto cmd = json::parse(request->command);
 
@@ -316,11 +612,11 @@ int main(int argc, char** argv)
                         bool planned = false;
 
                         for (int i = 0; i < max_attempts; i++) {
+                            if (stop_requested.load()) break;
                             double tol = base_tol + (i * tol_step);
                             RCLCPP_INFO(logger, "Straight-line + orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                         i + 1, max_attempts, tol);
 
-                            // Keep gripper flat: free rotation around link_eef X, constrain Y and Z
                             moveit_msgs::msg::OrientationConstraint oc;
                             oc.header.frame_id = BASE_FRAME;
                             oc.link_name = CONSTRAINT_LINK;
@@ -328,23 +624,23 @@ int main(int argc, char** argv)
                             oc.absolute_x_axis_tolerance = M_PI;
                             oc.absolute_y_axis_tolerance = tol;
                             oc.absolute_z_axis_tolerance = tol;
-                            oc.parameterization = 1;  // ROTATION_VECTOR
+                            oc.parameterization = 1;
                             oc.weight = 1.0;
 
                             moveit_msgs::msg::Constraints path_constraints;
                             path_constraints.orientation_constraints.push_back(oc);
-                            arm.setPathConstraints(path_constraints);
+                            apply_combined_constraints(path_constraints);
 
                             std::vector<geometry_msgs::msg::Pose> waypoints = {target};
                             moveit_msgs::msg::RobotTrajectory trajectory;
                             double fraction = arm.computeCartesianPath(waypoints, 0.01, trajectory);
                             if (fraction >= 0.99) {
                                 arm.execute(trajectory);
-                                planned = true;
+                                planned = !stop_requested.load();
                                 break;
                             }
                         }
-                        arm.clearPathConstraints();
+                        clear_eef_bounds();
 
                         response->response = json({
                             {"success", planned},
@@ -352,15 +648,18 @@ int main(int argc, char** argv)
                                                 : "Straight-line planning failed with orientation constraint"}
                         }).dump();
                     } else {
+                        apply_eef_bounds();
                         std::vector<geometry_msgs::msg::Pose> waypoints = {target};
                         moveit_msgs::msg::RobotTrajectory trajectory;
                         double fraction = arm.computeCartesianPath(waypoints, 0.01, trajectory);
 
                         if (fraction >= 0.99) {
                             arm.execute(trajectory);
+                            clear_eef_bounds();
                             response->response = json({{"success", true},
                                 {"message", "Straight-line motion succeeded"}}).dump();
                         } else {
+                            clear_eef_bounds();
                             response->response = json({{"success", false},
                                 {"message", "Straight-line planning achieved " +
                                             std::to_string(int(fraction * 100)) + "%"}}).dump();
@@ -438,6 +737,7 @@ int main(int argc, char** argv)
                     bool planned = false;
 
                     for (int i = 0; i < max_attempts; i++) {
+                        if (stop_requested.load()) break;
                         double tol = base_tol + (i * tol_step);
                         RCLCPP_INFO(logger, "Orientation constraint attempt %d/%d, xy_tol: %.3f rad",
                                     i + 1, max_attempts, tol);
@@ -455,7 +755,7 @@ int main(int argc, char** argv)
 
                         moveit_msgs::msg::Constraints path_constraints;
                         path_constraints.orientation_constraints.push_back(oc);
-                        arm.setPathConstraints(path_constraints);
+                        apply_combined_constraints(path_constraints);
 
                         arm.setJointValueTarget(best_solution);
                         moveit::planning_interface::MoveGroupInterface::Plan plan;
@@ -466,7 +766,7 @@ int main(int argc, char** argv)
                             break;
                         }
                     }
-                    arm.clearPathConstraints();
+                    clear_eef_bounds();
 
                     response->response = json({
                         {"success", planned},
@@ -475,10 +775,17 @@ int main(int argc, char** argv)
                     }).dump();
                 } else {
                     // 4. Plan in joint space to the best IK solution, retry on validation failure
+                    apply_eef_bounds();
                     arm.setJointValueTarget(best_solution);
                     const int MAX_CART_RETRIES = 5;
                     bool cart_succeeded = false;
                     for (int attempt = 1; attempt <= MAX_CART_RETRIES; attempt++) {
+                        if (stop_requested.load()) {
+                            clear_eef_bounds();
+                            response->response = json({{"success", false},
+                                {"message", "Motion stopped by /stop_motion"}}).dump();
+                            return;
+                        }
                         moveit::planning_interface::MoveGroupInterface::Plan plan;
                         bool plan_ok = (arm.plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                         if (plan_ok) {
@@ -489,10 +796,16 @@ int main(int argc, char** argv)
                                 cart_succeeded = true;
                                 break;
                             }
+                            if (stop_requested.load()) {
+                                response->response = json({{"success", false},
+                                    {"message", "Motion stopped by /stop_motion"}}).dump();
+                                return;
+                            }
                         }
                         RCLCPP_WARN(logger, "Cartesian move attempt %d/%d failed, retrying...",
                                     attempt, MAX_CART_RETRIES);
                     }
+                    clear_eef_bounds();
                     if (!cart_succeeded) {
                         response->response = json({{"success", false},
                             {"message", "Cartesian motion failed after " + std::to_string(MAX_CART_RETRIES) + " attempts"}}).dump();
@@ -500,6 +813,7 @@ int main(int argc, char** argv)
                 }
 
             } catch (const std::exception& e) {
+                clear_eef_bounds();
                 response->response = json({{"success", false},
                     {"message", std::string("Error: ") + e.what()}}).dump();
             }
@@ -611,7 +925,7 @@ int main(int argc, char** argv)
 
                     if (action == "enable") {
                         // Set teach sensitivity (1–5, default 3)
-                        int sensitivity = cmd.value("sensitivity", 3);
+                        int sensitivity = cmd.value("sensitivity", 5);
                         sensitivity = std::clamp(sensitivity, 1, 5);
                         xarm_ptr->set_teach_sensitivity(sensitivity);
                         RCLCPP_INFO(logger, "Teach sensitivity set to %d", sensitivity);
@@ -747,10 +1061,107 @@ int main(int argc, char** argv)
         RCLCPP_INFO(logger, "Guide mode service DISABLED (enable_guide_mode=false)");
     }
 
+    // ===================== Collision Sensitivity Service =====================
+    rclcpp::Service<JsonCommand>::SharedPtr collision_sensitivity_service;
+    if (xarm_ptr) {
+        collision_sensitivity_service = service_node->create_service<JsonCommand>(
+            "/set_collision_sensitivity",
+            [&xarm_ptr, &logger, list_ctrl_client, switch_ctrl_client](
+                const JsonCommand::Request::SharedPtr request,
+                JsonCommand::Response::SharedPtr response)
+            {
+                try {
+                    auto cmd = json::parse(request->command);
+                    int level = cmd.at("level").get<int>();
+                    level = std::clamp(level, 0, 5);
+                    int ret = xarm_ptr->set_collision_sensitivity(level);
+                    RCLCPP_INFO(logger, "Collision sensitivity set to %d (ret=%d)", level, ret);
+                    if (ret == 0) {
+                        /* UFactory HW often reports state 5 (CONFIG_CHANGED) and deactivates
+                         * traj + broadcasters; controller_manager can stall ~1s. Brief pause
+                         * then re-arm controllers before the next /cartesian_command. */
+                        std::this_thread::sleep_for(std::chrono::milliseconds(800));
+                        ensure_xarm6_traj_controller_active(list_ctrl_client, switch_ctrl_client, logger);
+                    }
+                    response->response = json({
+                        {"success", ret == 0},
+                        {"message", ret == 0 ? "Collision sensitivity set to " + std::to_string(level)
+                                             : "Failed, ret=" + std::to_string(ret)}
+                    }).dump();
+                } catch (const std::exception& e) {
+                    response->response = json({{"success", false},
+                        {"message", std::string("Error: ") + e.what()}}).dump();
+                }
+            }
+        );
+    }
+
+    // ===================== EEF Bounds Service =====================
+    auto eef_bounds_service = service_node->create_service<JsonCommand>(
+        "/set_eef_bounds",
+        [&eef_bounds, &logger](
+            const JsonCommand::Request::SharedPtr request,
+            JsonCommand::Response::SharedPtr response)
+        {
+            try {
+                auto cmd = json::parse(request->command);
+                std::string action = cmd.at("action").get<std::string>();
+
+                if (action == "set") {
+                    std::lock_guard<std::mutex> lock(eef_bounds.mutex);
+                    eef_bounds.x_min = cmd.at("x_min").get<double>();
+                    eef_bounds.x_max = cmd.at("x_max").get<double>();
+                    eef_bounds.z_min = cmd.at("z_min").get<double>();
+                    eef_bounds.z_max = cmd.at("z_max").get<double>();
+                    eef_bounds.active = true;
+                    RCLCPP_INFO(logger, "EEF bounds SET: X[%.3f, %.3f] Z[%.3f, %.3f]",
+                                eef_bounds.x_min, eef_bounds.x_max,
+                                eef_bounds.z_min, eef_bounds.z_max);
+                    response->response = json({{"success", true},
+                        {"message", "EEF bounds active"}}).dump();
+
+                } else if (action == "clear") {
+                    std::lock_guard<std::mutex> lock(eef_bounds.mutex);
+                    eef_bounds.active = false;
+                    RCLCPP_INFO(logger, "EEF bounds CLEARED");
+                    response->response = json({{"success", true},
+                        {"message", "EEF bounds cleared"}}).dump();
+
+                } else {
+                    response->response = json({{"success", false},
+                        {"message", "Unknown action. Use 'set' or 'clear'."}}).dump();
+                }
+            } catch (const std::exception& e) {
+                response->response = json({{"success", false},
+                    {"message", std::string("Error: ") + e.what()}}).dump();
+            }
+        }
+    );
+
+    // ===================== Stop Motion Service =====================
+    // Must use a separate ReentrantCallbackGroup so it can execute
+    // even while /cartesian_command or /joint_command is blocking in arm.execute().
+    auto stop_cb_group = service_node->create_callback_group(
+        rclcpp::CallbackGroupType::Reentrant);
+    auto stop_motion_service = service_node->create_service<std_srvs::srv::Empty>(
+        "/stop_motion",
+        [&arm, &logger, &stop_requested](
+            const std_srvs::srv::Empty::Request::SharedPtr /*request*/,
+            std_srvs::srv::Empty::Response::SharedPtr /*response*/)
+        {
+            RCLCPP_WARN(logger, "STOP MOTION requested — halting arm immediately");
+            stop_requested.store(true);
+            arm.stop();
+        },
+        rmw_qos_profile_services_default,
+        stop_cb_group
+    );
+
     RCLCPP_INFO(logger, "Services ready:");
     RCLCPP_INFO(logger, "  /joint_command         - Joint-space arm control");
     RCLCPP_INFO(logger, "  /cartesian_command     - Cartesian arm control");
     RCLCPP_INFO(logger, "  /set_octomap_enabled   - Enable/disable octomap for planning");
+    RCLCPP_INFO(logger, "  /stop_motion           - Emergency stop current motion");
     if (enable_gripper) {
         RCLCPP_INFO(logger, "  /gripper_command   - Gripper open/close");
     }

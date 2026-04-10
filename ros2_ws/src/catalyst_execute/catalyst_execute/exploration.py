@@ -22,36 +22,40 @@ import time
 import rclpy
 from catalyst_interfaces.srv import JsonCommand
 
+from catalyst_execute.utils.execute_config import section
 
-# Exploration pose (degrees): joints 2-6 stay fixed while joint1 sweeps.
-EXPLORE_JOINTS = [88.35, -81.80, -21.58, 191.52, -41.80, 169.44]
 
-# Joint1 sweep range (degrees) and step size
-SWEEP_START = 88.0
-SWEEP_END = 130.0
-SWEEP_STEP = 10.0
-
-# Target tag
-TAG_FRAME = 'tag_liquid_handler'
-
-# How long to wait after each move for vision to update (seconds)
-SETTLE_TIME = 0.5
-
-# Max time to wait for a fresh world_model message after cutoff (seconds)
-FRESH_READ_TIMEOUT = 2.0
+def _exploration_defaults():
+    ex = section('exploration')
+    joints = ex.get(
+        'explore_joints_deg',
+        [101.8256, -63.9126, -19.2997, 176.077, -43.6008, 188.82])
+    return {
+        'explore_joints': list(joints),
+        'sweep_start': float(ex.get('sweep_start', 91.9783)),
+        'sweep_end': float(ex.get('sweep_end', 135.9783)),
+        'sweep_step': float(ex.get('sweep_step', 10.0)),
+        'tag_frame': ex.get('default_tag_frame', 'tag_liquid_handler'),
+        'settle_time': float(ex.get('settle_time', 0.5)),
+        'fresh_read_timeout': float(ex.get('fresh_read_timeout', 2.0)),
+        'joint_move_timeout_sec': float(ex.get('joint_move_timeout_sec', 30.0)),
+        'move_speed': float(ex.get('default_move_speed', 0.1)),
+    }
 
 
 class TagExplorer:
     """Sweeps joint1 to find an AprilTag, using an existing ROS node."""
 
     def __init__(self, node, joint_client, world_model_getter,
-                 tag_frame=TAG_FRAME,
+                 tag_frame=None,
                  explore_joints=None,
-                 sweep_start=SWEEP_START,
-                 sweep_end=SWEEP_END,
-                 sweep_step=SWEEP_STEP,
-                 move_speed=0.3,
-                 settle_time=SETTLE_TIME):
+                 sweep_start=None,
+                 sweep_end=None,
+                 sweep_step=None,
+                 move_speed=None,
+                 settle_time=None,
+                 fresh_read_timeout=None,
+                 joint_move_timeout_sec=None):
         """
         Args:
             node: An rclpy Node (used for logging and spinning).
@@ -70,17 +74,26 @@ class TagExplorer:
             sweep_step: Step size for joint1 sweep (degrees).
             move_speed: Velocity scaling factor for joint moves (0.01-1.0).
             settle_time: Seconds to wait after each move before checking.
+            fresh_read_timeout: Max seconds to wait for a fresh world_model.
+            joint_move_timeout_sec: Timeout for each joint_command call.
         """
+        d = _exploration_defaults()
         self._node = node
         self._joint_client = joint_client
         self._get_world_model = world_model_getter
-        self._tag_frame = tag_frame
-        self._explore_joints = list(explore_joints or EXPLORE_JOINTS)
-        self._sweep_start = sweep_start
-        self._sweep_end = sweep_end
-        self._sweep_step = sweep_step
-        self._move_speed = move_speed
-        self._settle_time = settle_time
+        self._tag_frame = tag_frame if tag_frame is not None else d['tag_frame']
+        self._explore_joints = list(
+            explore_joints if explore_joints is not None else d['explore_joints'])
+        self._sweep_start = float(sweep_start if sweep_start is not None else d['sweep_start'])
+        self._sweep_end = float(sweep_end if sweep_end is not None else d['sweep_end'])
+        self._sweep_step = float(sweep_step if sweep_step is not None else d['sweep_step'])
+        self._move_speed = float(move_speed if move_speed is not None else d['move_speed'])
+        self._settle_time = float(settle_time if settle_time is not None else d['settle_time'])
+        self._fresh_read_timeout = float(
+            fresh_read_timeout if fresh_read_timeout is not None else d['fresh_read_timeout'])
+        self._joint_move_timeout_sec = float(
+            joint_move_timeout_sec
+            if joint_move_timeout_sec is not None else d['joint_move_timeout_sec'])
 
     def search(self):
         """Sweep joint1 and return the first detected tag pose, or None.
@@ -135,7 +148,8 @@ class TagExplorer:
             'speed': self._move_speed,
         })
         future = self._joint_client.call_async(req)
-        rclpy.spin_until_future_complete(self._node, future, timeout_sec=30.0)
+        rclpy.spin_until_future_complete(
+            self._node, future, timeout_sec=self._joint_move_timeout_sec)
         if future.result() is None:
             return False
         resp = json.loads(future.result().response)
@@ -148,7 +162,7 @@ class TagExplorer:
         Returns:
             pose dict with 'position' and 'orientation', or None.
         """
-        deadline = time.monotonic() + FRESH_READ_TIMEOUT
+        deadline = time.monotonic() + self._fresh_read_timeout
 
         while time.monotonic() < deadline:
             rclpy.spin_once(self._node, timeout_sec=0.1)

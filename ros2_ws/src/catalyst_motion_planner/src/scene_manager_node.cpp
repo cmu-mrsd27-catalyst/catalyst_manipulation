@@ -2,6 +2,8 @@
 #include <moveit/planning_scene_interface/planning_scene_interface.hpp>
 #include <moveit_msgs/msg/collision_object.hpp>
 #include <moveit_msgs/msg/attached_collision_object.hpp>
+#include <moveit_msgs/msg/planning_scene.hpp>
+#include <moveit_msgs/srv/get_planning_scene.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <shape_msgs/msg/mesh.hpp>
 #include <geometric_shapes/shapes.h>
@@ -119,6 +121,48 @@ int main(int argc, char** argv)
                             pose.position.z);
             }
 
+            // Boxes defined in link_base (center pose, sizes along base X/Y/Z)
+            if (config["link_base_boxes"]) {
+                for (const auto& entry : config["link_base_boxes"]) {
+                    moveit_msgs::msg::CollisionObject obj;
+                    obj.header.frame_id = BASE_FRAME;
+                    obj.id = entry["id"].as<std::string>();
+                    obj.operation = moveit_msgs::msg::CollisionObject::ADD;
+
+                    shape_msgs::msg::SolidPrimitive prim;
+                    prim.type = shape_msgs::msg::SolidPrimitive::BOX;
+                    prim.dimensions = {
+                        entry["size"]["x"].as<double>(),
+                        entry["size"]["y"].as<double>(),
+                        entry["size"]["z"].as<double>(),
+                    };
+
+                    geometry_msgs::msg::Pose pose;
+                    pose.position.x = entry["position"]["x"].as<double>();
+                    pose.position.y = entry["position"]["y"].as<double>();
+                    pose.position.z = entry["position"]["z"].as<double>();
+                    pose.orientation.w = 1.0;
+                    if (entry["orientation"]) {
+                        const auto o = entry["orientation"];
+                        pose.orientation.x = o["qx"].as<double>();
+                        pose.orientation.y = o["qy"].as<double>();
+                        pose.orientation.z = o["qz"].as<double>();
+                        pose.orientation.w = o["qw"].as<double>();
+                    }
+
+                    obj.primitives.push_back(prim);
+                    obj.primitive_poses.push_back(pose);
+                    objects.push_back(obj);
+                    known_objects[obj.id] = obj;
+                    RCLCPP_INFO(
+                        logger,
+                        "  Added link_base box: %s (%.3fx%.3fx%.3f m, center %.3f, %.3f, %.3f)",
+                        obj.id.c_str(), prim.dimensions[0], prim.dimensions[1],
+                        prim.dimensions[2], pose.position.x, pose.position.y,
+                        pose.position.z);
+                }
+            }
+
             // Ground plane
             {
                 moveit_msgs::msg::CollisionObject obj;
@@ -154,10 +198,13 @@ int main(int argc, char** argv)
         RCLCPP_WARN(logger, "No world_objects_yaml parameter set, skipping auto-load");
     }
 
+    auto get_planning_scene_client =
+        node->create_client<moveit_msgs::srv::GetPlanningScene>("/get_planning_scene");
+
     // ── Scene Command Service ──
     auto scene_service = node->create_service<JsonCommand>(
         "/scene_command",
-        [&psi, &known_objects, &objects_mutex, &logger](
+        [&psi, &known_objects, &objects_mutex, &logger, get_planning_scene_client](
             const JsonCommand::Request::SharedPtr request,
             JsonCommand::Response::SharedPtr response)
         {
@@ -393,10 +440,66 @@ int main(int argc, char** argv)
                     response->response = json({{"success", true},
                         {"objects", id_list}}).dump();
 
+                } else if (action == "allow_object_default_collisions") {
+                    std::string object_id = cmd.at("object_id").get<std::string>();
+                    bool allow = cmd.at("allow").get<bool>();
+
+                    if (!get_planning_scene_client->wait_for_service(std::chrono::seconds(5))) {
+                        response->response = json({{"success", false},
+                            {"message", "get_planning_scene service not available"}}).dump();
+                        return;
+                    }
+
+                    auto get_req = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+                    get_req->components.components = 128;  // ALLOWED_COLLISION_MATRIX
+                    auto future = get_planning_scene_client->async_send_request(get_req);
+                    if (future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+                        response->response = json({{"success", false},
+                            {"message", "GetPlanningScene timed out"}}).dump();
+                        return;
+                    }
+
+                    moveit_msgs::msg::AllowedCollisionMatrix acm =
+                        future.get()->scene.allowed_collision_matrix;
+                    if (acm.entry_names.empty()) {
+                        response->response = json({{"success", false},
+                            {"message", "Planning scene ACM is empty"}}).dump();
+                        return;
+                    }
+
+                    bool found_default = false;
+                    for (size_t i = 0; i < acm.default_entry_names.size(); ++i) {
+                        if (acm.default_entry_names[i] == object_id) {
+                            acm.default_entry_values[i] = allow;
+                            found_default = true;
+                            break;
+                        }
+                    }
+                    if (!found_default) {
+                        acm.default_entry_names.push_back(object_id);
+                        acm.default_entry_values.push_back(allow);
+                    }
+
+                    moveit_msgs::msg::PlanningScene ps;
+                    ps.is_diff = true;
+                    ps.allowed_collision_matrix = acm;
+
+                    bool applied = psi.applyPlanningScene(ps);
+                    if (applied) {
+                        RCLCPP_INFO(logger, "ACM default for '%s': allow_all=%s",
+                                    object_id.c_str(), allow ? "true" : "false");
+                        response->response = json({{"success", true},
+                            {"message", "Updated ACM for " + object_id}}).dump();
+                    } else {
+                        response->response = json({{"success", false},
+                            {"message", "applyPlanningScene failed"}}).dump();
+                    }
+
                 } else {
                     response->response = json({{"success", false},
                         {"message", "Unknown action: " + action +
-                                    ". Use add/remove/move/attach/detach/clear/list"}}).dump();
+                                    ". Use add/remove/move/attach/detach/clear/list/"
+                                    "allow_object_default_collisions"}}).dump();
                 }
 
             } catch (const json::exception& e) {
@@ -410,7 +513,9 @@ int main(int argc, char** argv)
     );
 
     RCLCPP_INFO(logger, "Scene manager ready:");
-    RCLCPP_INFO(logger, "  /scene_command - Add/remove/move/attach/detach/clear/list collision objects");
+    RCLCPP_INFO(logger,
+                "  /scene_command - add/remove/move/attach/detach/clear/list/"
+                "allow_object_default_collisions");
 
     spin_thread.join();
     rclcpp::shutdown();

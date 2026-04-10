@@ -13,10 +13,12 @@ Usage:
 """
 
 import copy
+import json
 import os
 import re
 import subprocess
 import sys
+import time
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
@@ -127,7 +129,7 @@ def generate_launch_description():
         sensors_3d_yaml = load_yaml('catalyst_moveit_config', 'config/sensors_3d.yaml')
         octomap_config = {
             'octomap_frame': 'link_base',
-            'octomap_resolution': 0.005,
+            'octomap_resolution': 0.02,
         }
     else:
         sensors_3d_yaml = {}
@@ -464,12 +466,72 @@ def generate_launch_description():
     actions.append(delayed_scene_manager)
 
     # ── World Model Node ──
+    # Load world_model.yaml: CATALYST_WORLD_MODEL_YAML (e.g. /root/ros2_ws/src/... in Docker)
+    # if set and the file exists, else install share via ament index (never a host home path).
+    wm_ros_params = {}
+    _wm_yaml = os.environ.get('CATALYST_WORLD_MODEL_YAML', '').strip()
+    if not _wm_yaml or not os.path.isfile(_wm_yaml):
+        _wm_yaml = os.path.join(
+            get_package_share_directory('catalyst_world_model'),
+            'config',
+            'world_model.yaml',
+        )
+    _wm_load_err = None
+    try:
+        with open(_wm_yaml, 'r', encoding='utf-8') as _wm_f:
+            _wm_doc = yaml.safe_load(_wm_f) or {}
+        wm_ros_params = (
+            (_wm_doc.get('world_model_node') or {}).get('ros__parameters') or {}
+        )
+    except Exception as _wm_err:
+        _wm_load_err = str(_wm_err)
+        print(
+            f'[catalyst_bringup] WARNING: could not load world_model.yaml for '
+            f'world_model_node (using code defaults only): {_wm_err}',
+            file=sys.stderr,
+        )
+
+    # #region agent log
+    _dbg_line = (
+        json.dumps(
+            {
+                'sessionId': '24326a',
+                'runId': 'pre-fix',
+                'hypothesisId': 'H1',
+                'location': 'demo.launch.py:world_model_params',
+                'message': 'launch yaml load for world_model_node',
+                'data': {
+                    'yaml_path': _wm_yaml,
+                    'load_error': _wm_load_err,
+                    'health.check_ft_sensor_in_dict': wm_ros_params.get(
+                        'health.check_ft_sensor', '__MISSING__'
+                    ),
+                    'param_keys_count': len(wm_ros_params),
+                },
+                'timestamp': int(time.time() * 1000),
+            },
+            default=str,
+        )
+        + '\n'
+    )
+    _dbg_paths = ['/tmp/catalyst_debug_24326a.ndjson']
+    _dbg_extra = os.environ.get('CATALYST_DEBUG_LOG', '').strip()
+    if _dbg_extra:
+        _dbg_paths.insert(0, _dbg_extra)
+    for _dbg_p in _dbg_paths:
+        try:
+            with open(_dbg_p, 'a', encoding='utf-8') as _dbg_f:
+                _dbg_f.write(_dbg_line)
+        except Exception:
+            pass
+    # #endregion
+
     world_model_node = Node(
         package='catalyst_world_model',
         executable='world_model',
         name='world_model_node',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[wm_ros_params, {'use_sim_time': use_sim_time}],
     )
     delayed_world_model = RegisterEventHandler(
         event_handler=OnProcessExit(
@@ -491,9 +553,9 @@ def generate_launch_description():
                 'input_topic': '/camera/camera/depth/color/points',
                 'output_topic': '/filtered_pointcloud',
                 'k_neighbours': 50,
-                'std_multiplier': 0.5,
-                'voxel_size': 0.005,
-                'max_range': 0.8,
+                'std_multiplier': 1.0,
+                'voxel_size': 0.02,
+                'max_range': 1.5,
             }],
         )
         actions.append(pointcloud_filter_node)

@@ -28,17 +28,26 @@ catalyst_gazebo/
 
 ## Quick Start
 
-### Launch Gz Harmonic with Robot
+### Recommended: unified demo (Gazebo + MoveIt + planners)
+
+From the workspace:
 
 ```bash
-# Build the package
-cd ~/catalyst_repo_jazzy/catalyst-manipulation/ros2_ws
+source install/setup.bash
+ros2 launch catalyst_bringup demo.launch.py sim:=gazebo
+```
+
+This pulls in Gz Harmonic, robot spawn, controllers, MoveIt, `motion_planner`, `scene_manager`, and `world_model` as configured in **`catalyst_bringup`**.
+
+### Standalone Gazebo launch (package-local)
+
+```bash
 colcon build --packages-select catalyst_gazebo
 source install/setup.bash
-
-# Launch simulation
 ros2 launch catalyst_gazebo gazebo.launch.py
 ```
+
+Use this when you only need the sim world + robot without the full bringup stack.
 
 ### Verify Everything is Running
 

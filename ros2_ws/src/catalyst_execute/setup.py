@@ -10,7 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/config', ['config/gripper_pose.json']),
+        ('share/' + package_name + '/config', [
+            'config/gripper_pose.json',
+            'config/catalyst_execute_params.yaml',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -38,7 +41,11 @@ setup(
             'compute_poses_service = catalyst_execute.services.compute_poses_service:main',
             'pick_action_server = catalyst_execute.actions.pick_action_server:main',
             'place_action_server = catalyst_execute.actions.place_action_server:main',
+            'place_on_robot_action_server = catalyst_execute.actions.place_on_robot_action_server:main',
+            'pick_from_robot_container_action_server = catalyst_execute.actions.pick_from_robot_container_action_server:main',
             'explore_action_server = catalyst_execute.actions.explore_action_server:main',
+            'test_container_place = catalyst_execute.test_container_place:main',
+            'test_eef_bounds_viz = catalyst_execute.test_eef_bounds_viz:main',
         ],
     },
 )
