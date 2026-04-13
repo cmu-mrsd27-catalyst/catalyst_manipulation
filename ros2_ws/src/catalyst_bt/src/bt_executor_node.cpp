@@ -93,6 +93,8 @@ int main(int argc, char** argv)
                 {"place_only_with_detect", "MainPlaceOnlyWithDetect"},
                 {"pick_place_with_detect", "MainPickPlaceWithDetect"},
                 {"place_pick_with_detect", "MainPlacePickWithDetect"},
+                {"demo_orchestration", "MainDemoOrchestration"},
+                {"pick_container_then_place_on_robot", "MainPickContainerThenPlaceOnRobot"},
             };
 
             auto it = k_task_to_tree.find(task);
@@ -102,7 +104,8 @@ int main(int argc, char** argv)
                     {"message", "Unknown task. Use: pick_only | place_only | pick_place | place_pick | "
                                 "pick_then_place_on_robot | pick_from_robot_container | "
                                 "pick_only_with_detect | place_only_with_detect | pick_place_with_detect | "
-                                "place_pick_with_detect"},
+                                "place_pick_with_detect | demo_orchestration | "
+                                "pick_container_then_place_on_robot"},
                     {"task", task},
                 }.dump();
                 return;
@@ -148,7 +151,8 @@ int main(int argc, char** argv)
     RCLCPP_INFO(node->get_logger(),
                 "bt_executor ready — call: ros2 service call /bt_execute "
                 "catalyst_interfaces/srv/JsonCommand \"{command: '{\\\"task\\\": \\\"pick_only\\\"}'}\" "
-                "(also: pick_then_place_on_robot | pick_from_robot_container)");
+                "(also: pick_then_place_on_robot | pick_from_robot_container | "
+                "pick_container_then_place_on_robot)");
 
     // Multi-threaded executor: /bt_execute handler blocks in run_tree_to_completion while
     // ticking the BT; other threads must process subscriptions, service clients, and action

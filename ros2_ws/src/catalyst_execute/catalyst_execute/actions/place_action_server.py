@@ -7,7 +7,7 @@ Handles the full place sequence:
   3. Pre-place at offset (still 5); then octomap off
   4. SDK connect (collision sensitivity 0)
   5. Corner registration (velocity control)
-  6. Position correction (SDK position move)
+  6. Position correction (SDK position move: ΔZ then ΔX+ΔY when staged_place_position_correction)
   7. Force descent (velocity control with F/T)
   8. Open gripper — release object
   9. SDK position move +Z (clear vertically; default 50 mm) while still on SDK
@@ -370,17 +370,39 @@ class PlaceActionServer(Node):
             return self._result(False, 'POSITION_CORRECTION_FAILED',
                                 corrected.get('message', ''))
 
-        move = self._svc.sdk_call(
-            corrected, timeout=self._position_correction_timeout_sec)
-        if not move.get('success'):
-            self._feedback(goal_handle, 'POSITION_CORRECTION',
-                           f'Move failed: {move.get("message", "")}')
-            self._sdk_cleanup()
-            self._restart_and_retract(goal_handle)
-            goal_handle.abort()
-            return self._result(False, 'POSITION_CORRECTION_FAILED',
-                                move.get('message', ''))
-        self._after_motion()
+        moves = corrected.get('correction_moves')
+        if moves:
+            _stage_labels = ('Z offset (lift)', 'X+Y offset')
+            for i, mv in enumerate(moves):
+                label = (
+                    _stage_labels[i] if i < len(_stage_labels)
+                    else f'segment {i + 1}')
+                self._feedback(
+                    goal_handle, 'POSITION_CORRECTION',
+                    f'Stage {i + 1}/{len(moves)}: {label}')
+                move = self._svc.sdk_call(
+                    mv, timeout=self._position_correction_timeout_sec)
+                if not move.get('success'):
+                    self._feedback(goal_handle, 'POSITION_CORRECTION',
+                                   f'Move failed: {move.get("message", "")}')
+                    self._sdk_cleanup()
+                    self._restart_and_retract(goal_handle)
+                    goal_handle.abort()
+                    return self._result(False, 'POSITION_CORRECTION_FAILED',
+                                        move.get('message', ''))
+                self._after_motion()
+        else:
+            move = self._svc.sdk_call(
+                corrected, timeout=self._position_correction_timeout_sec)
+            if not move.get('success'):
+                self._feedback(goal_handle, 'POSITION_CORRECTION',
+                               f'Move failed: {move.get("message", "")}')
+                self._sdk_cleanup()
+                self._restart_and_retract(goal_handle)
+                goal_handle.abort()
+                return self._result(False, 'POSITION_CORRECTION_FAILED',
+                                    move.get('message', ''))
+            self._after_motion()
 
         if self._canceled(goal_handle):
             self._sdk_cleanup()

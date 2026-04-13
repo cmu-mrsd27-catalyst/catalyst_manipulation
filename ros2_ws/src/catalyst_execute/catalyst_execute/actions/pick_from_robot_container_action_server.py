@@ -4,11 +4,11 @@
 Assumes the arm starts at home.
 Sequence:
   1. Optional settle
-  2. Octomap ON → down_right → pre_pick (container hover) → open gripper
+  2. Octomap ON → transit down_right → pre_pick (joint waypoints if enabled, else Cartesian)
   3. Remove workspace_box collision object from planning scene (restore after retract)
   4. Octomap OFF → Cartesian descent to pick_pose
   5. Guide mode (optional) → close gripper → disable guide
-  6. Retract to pre_pick → re-add workspace_box → octomap ON → down_right → joint home
+  6. Retract to pre_pick → re-add workspace_box → octomap ON → down_right (joint/Cartesian) → joint home
 
 Goal (JSON):
   use_guide_mode: bool (default true)
@@ -30,6 +30,7 @@ from rclpy.node import Node
 from std_msgs.msg import String as StringMsg
 from catalyst_interfaces.action import ExecuteTask
 from catalyst_execute.actions.robot_container_utils import (
+    parse_container_joint_transit,
     pose_cfg_to_cartesian_dict,
     workspace_box_restore_from_cfg,
 )
@@ -71,6 +72,13 @@ class PickFromRobotContainerActionServer(Node):
         self._down_right = cfg.get('down_right', {})
         self._pre_pick = cfg.get('pre_pick', {})
         self._pick_pose = cfg.get('pick_pose', {})
+
+        self._joint_transit = parse_container_joint_transit(cfg)
+        _jt_raw = cfg.get('container_transit_joint_waypoints')
+        if isinstance(_jt_raw, dict) and _jt_raw.get('enabled') and self._joint_transit is None:
+            self.get_logger().warn(
+                'container_transit_joint_waypoints.enabled but joints invalid — '
+                'using Cartesian transit')
 
         self._cb_group = ReentrantCallbackGroup()
         self._svc = RobotServiceClients(self, self._cb_group)
@@ -182,9 +190,15 @@ class PickFromRobotContainerActionServer(Node):
         except Exception:
             pass
         try:
-            self._svc.move_cartesian_cmd(
-                pose_cfg_to_cartesian_dict(self._down_right),
-                timeout=self._move_timeout_sec)
+            if self._joint_transit:
+                self._svc.move_joints_deg(
+                    self._joint_transit['joints_down_right'],
+                    speed=self._joint_transit['speed'],
+                    timeout=self._move_timeout_sec)
+            else:
+                self._svc.move_cartesian_cmd(
+                    pose_cfg_to_cartesian_dict(self._down_right),
+                    timeout=self._move_timeout_sec)
         except Exception:
             pass
         self._publish_phase('IDLE')
@@ -237,27 +251,58 @@ class PickFromRobotContainerActionServer(Node):
         self._svc.set_octomap_enabled(True)
         self._svc.clear_octomap()
 
-        self._feedback(goal_handle, 'TRANSIT', 'Moving to down_right')
-        move = self._svc.move_cartesian_cmd(
-            pose_cfg_to_cartesian_dict(self._down_right),
-            timeout=self._move_timeout_sec)
-        if not move.get('success'):
-            goal_handle.abort()
-            return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
-        self._after_motion()
+        to = self._move_timeout_sec
+        jt = self._joint_transit
+        if jt:
+            self._feedback(goal_handle, 'TRANSIT', 'Joint path: home')
+            move = self._svc.move_home(speed=self._joint_home_speed, timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
+            self._after_motion()
+            if self._canceled(goal_handle):
+                self._cleanup(guide_was_enabled)
+                return self._result(False, 'CANCELED', 'Canceled')
+            self._feedback(goal_handle, 'TRANSIT', 'Joint path: down_right')
+            move = self._svc.move_joints_deg(
+                jt['joints_down_right'], speed=jt['speed'], timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
+            self._after_motion()
+            if self._canceled(goal_handle):
+                self._cleanup(guide_was_enabled)
+                return self._result(False, 'CANCELED', 'Canceled')
+            self._feedback(
+                goal_handle, 'PRE_PICK', 'Joint path: pre_pick container')
+            move = self._svc.move_joints_deg(
+                jt['joints_pre_container'], speed=jt['speed'], timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'PRE_PICK_FAILED', move.get('message', ''))
+            self._after_motion()
+        else:
+            self._feedback(goal_handle, 'TRANSIT', 'Moving to down_right')
+            move = self._svc.move_cartesian_cmd(
+                pose_cfg_to_cartesian_dict(self._down_right),
+                timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
+            self._after_motion()
 
-        if self._canceled(goal_handle):
-            self._cleanup(guide_was_enabled)
-            return self._result(False, 'CANCELED', 'Canceled')
+            if self._canceled(goal_handle):
+                self._cleanup(guide_was_enabled)
+                return self._result(False, 'CANCELED', 'Canceled')
 
-        self._feedback(goal_handle, 'PRE_PICK', 'Moving to pre_pick container')
-        move = self._svc.move_cartesian_cmd(
-            pose_cfg_to_cartesian_dict(self._pre_pick),
-            timeout=self._move_timeout_sec)
-        if not move.get('success'):
-            goal_handle.abort()
-            return self._result(False, 'PRE_PICK_FAILED', move.get('message', ''))
-        self._after_motion()
+            self._feedback(goal_handle, 'PRE_PICK', 'Moving to pre_pick container')
+            move = self._svc.move_cartesian_cmd(
+                pose_cfg_to_cartesian_dict(self._pre_pick),
+                timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'PRE_PICK_FAILED', move.get('message', ''))
+            self._after_motion()
 
         if self._canceled(goal_handle):
             self._cleanup(guide_was_enabled)
@@ -353,10 +398,17 @@ class PickFromRobotContainerActionServer(Node):
             self._cleanup(guide_was_enabled)
             return self._result(False, 'CANCELED', 'Canceled')
 
-        self._feedback(goal_handle, 'TRANSIT', 'Moving to down_right (exit path)')
-        move = self._svc.move_cartesian_cmd(
-            pose_cfg_to_cartesian_dict(self._down_right),
-            timeout=self._move_timeout_sec)
+        self._feedback(goal_handle, 'TRANSIT', 'Exit: down_right')
+        to = self._move_timeout_sec
+        if self._joint_transit:
+            move = self._svc.move_joints_deg(
+                self._joint_transit['joints_down_right'],
+                speed=self._joint_transit['speed'],
+                timeout=to)
+        else:
+            move = self._svc.move_cartesian_cmd(
+                pose_cfg_to_cartesian_dict(self._down_right),
+                timeout=to)
         self._after_motion()
         if not move.get('success'):
             goal_handle.abort()

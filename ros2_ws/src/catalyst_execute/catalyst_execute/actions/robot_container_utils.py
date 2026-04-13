@@ -38,6 +38,29 @@ def workspace_box_restore_from_cfg(cfg: dict) -> dict:
     return out
 
 
+def parse_container_joint_transit(cfg: dict):
+    """Optional fixed joint waypoints: home → down_right → pre (pick/place).
+
+    YAML block ``container_transit_joint_waypoints`` with ``enabled: true`` and
+    six-element ``joints_down_right`` / ``joints_pre_container`` (degrees).
+    Returns None if disabled or invalid (caller falls back to Cartesian).
+    """
+    raw = cfg.get('container_transit_joint_waypoints')
+    if not isinstance(raw, dict) or not raw.get('enabled', False):
+        return None
+    speed = float(raw.get('speed', 0.1))
+    jd = raw.get('joints_down_right')
+    jp = raw.get('joints_pre_container')
+    if not (isinstance(jd, (list, tuple)) and len(jd) == 6
+            and isinstance(jp, (list, tuple)) and len(jp) == 6):
+        return None
+    return {
+        'speed': speed,
+        'joints_down_right': [float(x) for x in jd],
+        'joints_pre_container': [float(x) for x in jp],
+    }
+
+
 def pose_cfg_to_cartesian_dict(pose_cfg: dict) -> dict:
     """Build /cartesian_command JSON from a pose block in catalyst_execute_params.yaml."""
     return {

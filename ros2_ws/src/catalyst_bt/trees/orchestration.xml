@@ -6,6 +6,12 @@
 
     *WithDetect* trees insert /detect_well_plate after Explore (GPU server + detect_well_plate_action_server).
 
+    MainDemoOrchestration: machine pick (vision pick_safe) → place_on_robot → home → re-explore +
+    vision place_safe → pick_from_robot_container → place on machine → home.
+
+    MainPickContainerThenPlaceOnRobot: pick_from_robot_container (retract, MoveIt, down_right, home
+    with plate) then place_on_robot (down_right → pre_place, SDK admittance, release, restart, home).
+
     Octomap on/clear: owned by pick/place action servers only (not in InitMinimal).
   -->
 
@@ -268,6 +274,83 @@
         <JsonService name="HomeEnd"
           service_name="/joint_command"
           command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== demo: machine → robot container → home → container → machine ========== -->
+  <BehaviorTree ID="MainDemoOrchestration">
+    <ReactiveSequence name="safe_demo_orchestration">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <!-- Phase 1: pick from workpiece, place on robot container -->
+        <TaskAction name="Explore1"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Detect1"
+          action_name="/detect_well_plate"
+          command='{"require":"pick_safe"}'
+          overrides="{explore_result}"
+          timeout_sec="180"/>
+        <TaskAction name="PickMachine"
+          action_name="/pick"
+          command='{"use_guide_mode": true}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeAfterPick"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+        <TaskAction name="PlaceOnRobot"
+          action_name="/place_on_robot"
+          command='{}'
+          timeout_sec="400"/>
+        <JsonService name="HomeBeforeReturn"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+        <!-- Phase 2: fresh tag + place_safe, then return plate to machine -->
+        <TaskAction name="Explore2"
+          action_name="/explore"
+          command='{"tag_frame": "tag_liquid_handler"}'
+          result="{explore_result}"
+          timeout_sec="120"/>
+        <TaskAction name="Detect2"
+          action_name="/detect_well_plate"
+          command='{"require":"place_safe"}'
+          overrides="{explore_result}"
+          timeout_sec="180"/>
+        <TaskAction name="PickFromRobotContainer"
+          action_name="/pick_from_robot_container"
+          command='{"use_guide_mode": true}'
+          timeout_sec="300"/>
+        <TaskAction name="PlaceMachine"
+          action_name="/place"
+          command='{}'
+          overrides="{explore_result}"
+          timeout_sec="300"/>
+        <JsonService name="HomeEnd"
+          service_name="/joint_command"
+          command='{"pose": "home", "speed": 0.1}'/>
+      </Sequence>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ========== pick from robot container then place back into same container ========== -->
+  <BehaviorTree ID="MainPickContainerThenPlaceOnRobot">
+    <ReactiveSequence name="safe_pick_container_then_place_on_robot">
+      <SystemHealthy topic="/world_model" timeout_sec="2.0"/>
+      <Sequence name="seq">
+        <SubTree ID="InitMinimal"/>
+        <TaskAction name="PickFromRobotContainer"
+          action_name="/pick_from_robot_container"
+          command='{"use_guide_mode": true}'
+          timeout_sec="300"/>
+        <TaskAction name="PlaceOnRobot"
+          action_name="/place_on_robot"
+          command='{}'
+          timeout_sec="400"/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>

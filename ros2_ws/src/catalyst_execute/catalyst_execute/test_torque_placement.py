@@ -344,7 +344,7 @@ class TestTorquePlacementNode(Node):
             self.get_logger().error(f'Cannot read arm position (code={code})')
             return False, 'Failed to read arm position'
 
-        # Phase state machine: DESCEND → SEARCH_Y → SEARCH_Z → DONE
+        # Phase state machine: DESCEND → SEARCH_Z → SEARCH_Y → DONE
         phase = 'DESCEND'
         corner_pose = None
 
@@ -377,29 +377,27 @@ class TestTorquePlacementNode(Node):
                     self.get_logger().info(
                         f'Contact detected! |Fx|={abs(ft[0]):.2f} N > {contact_force} N'
                     )
-                    phase = 'SEARCH_Y'
-                    self.get_logger().info('Searching left (Y) for corner...')
-
-            elif phase == 'SEARCH_Y':
-                # Move left in +Y (tool frame), no X velocity
-                vel_cmd[1] = -search_speed * 1000  # mm/s
-                if abs(ft[1]) > corner_force:
-                    self.get_logger().info(
-                        f'Corner Y found! |Fy|={abs(ft[1]):.2f} N > {corner_force} N'
-                    )
                     phase = 'SEARCH_Z'
                     self.get_logger().info('Searching forward (Z) for corner...')
 
             elif phase == 'SEARCH_Z':
-                # Move forward in +Z (tool frame), no X velocity
+                # Move forward in +Z (tool frame)
                 vel_cmd[2] = search_speed * 1000  # mm/s
                 if abs(ft[2]) > corner_force:
-                    # Read corner position
+                    self.get_logger().info(
+                        f'Corner Z found! |Fz|={abs(ft[2]):.2f} N > {corner_force} N'
+                    )
+                    phase = 'SEARCH_Y'
+                    self.get_logger().info('Searching left (Y) for corner...')
+
+            elif phase == 'SEARCH_Y':
+                vel_cmd[1] = -search_speed * 1000  # mm/s
+                if abs(ft[1]) > corner_force:
                     code_c, pose_c = self._arm.get_position()
                     if code_c == 0:
                         corner_pose = pose_c
                     self.get_logger().info(
-                        f'Corner Z found! |Fz|={abs(ft[2]):.2f} N > {corner_force} N'
+                        f'Corner Y found! |Fy|={abs(ft[1]):.2f} N > {corner_force} N'
                     )
                     self.get_logger().info(
                         f'Corner position (mm): '

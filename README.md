@@ -124,8 +124,10 @@ ros2 service call /bt_execute catalyst_interfaces/srv/JsonCommand \
 | `place_only_with_detect` | `MainPlaceOnlyWithDetect` | Explore → detect (`require: place_safe`) → place → home |
 | `pick_place_with_detect` | `MainPickPlaceWithDetect` | Explore → detect (`require: both`) → pick → place → home |
 | `place_pick_with_detect` | `MainPlacePickWithDetect` | Explore → detect (`require: both`) → place → pick → home |
+| `demo_orchestration` | `MainDemoOrchestration` | Full demo: vision+pick machine → `place_on_robot` → home → vision+`place_safe` → pick container → `place` on machine → home |
+| `pick_container_then_place_on_robot` | `MainPickContainerThenPlaceOnRobot` | `/pick_from_robot_container` (retract, MoveIt, `down_right`, home) then `/place_on_robot` (transit to `pre_place`, SDK admittance, release, restart, home) |
 
-Requires the corresponding action servers to be running (including `/place_on_robot` and `/pick_from_robot_container` for the last two rows). Vision tasks also need **`detect_well_plate_action_server`**, camera streaming, and the GPU detection HTTP server.
+Requires the corresponding action servers to be running (including `/place_on_robot` and `/pick_from_robot_container` where those flows appear). Vision tasks (including **`demo_orchestration`**) also need **`detect_well_plate_action_server`**, camera streaming, and the GPU detection HTTP server.
 
 ---
 

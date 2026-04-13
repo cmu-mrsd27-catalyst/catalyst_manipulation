@@ -446,7 +446,7 @@ class SdkControlService(Node):
         }
 
     def _run_corner_registration(self, cmd):
-        """Corner registration: DESCEND → SEARCH_Y → SEARCH_Z → DONE."""
+        """Corner registration: DESCEND → SEARCH_Z → SEARCH_Y → DONE (tool frame)."""
         rate = cmd.get('rate', self.get_parameter('rate').value)
         dt = 1.0 / rate
 
@@ -493,26 +493,26 @@ class SdkControlService(Node):
                     self.get_logger().info(
                         f'Contact detected! |Fx|={abs(ft[0]):.2f} N > {contact_force} N'
                     )
-                    phase = 'SEARCH_Y'
-                    self.get_logger().info('Searching left (Y) for corner...')
-
-            elif phase == 'SEARCH_Y':
-                vel_cmd[1] = -search_speed * 1000  # mm/s
-                if abs(ft[1]) > corner_force:
-                    self.get_logger().info(
-                        f'Corner Y found! |Fy|={abs(ft[1]):.2f} N > {corner_force} N'
-                    )
                     phase = 'SEARCH_Z'
                     self.get_logger().info('Searching forward (Z) for corner...')
 
             elif phase == 'SEARCH_Z':
                 vel_cmd[2] = search_speed * 1000  # mm/s
                 if abs(ft[2]) > corner_force:
+                    self.get_logger().info(
+                        f'Corner Z found! |Fz|={abs(ft[2]):.2f} N > {corner_force} N'
+                    )
+                    phase = 'SEARCH_Y'
+                    self.get_logger().info('Searching left (Y) for corner...')
+
+            elif phase == 'SEARCH_Y':
+                vel_cmd[1] = -search_speed * 1000  # mm/s
+                if abs(ft[1]) > corner_force:
                     code_c, pose_c = self._arm.get_position()
                     if code_c == 0:
                         corner_pose = pose_c
                     self.get_logger().info(
-                        f'Corner Z found! |Fz|={abs(ft[2]):.2f} N > {corner_force} N'
+                        f'Corner Y found! |Fy|={abs(ft[1]):.2f} N > {corner_force} N'
                     )
                     if corner_pose:
                         self.get_logger().info(

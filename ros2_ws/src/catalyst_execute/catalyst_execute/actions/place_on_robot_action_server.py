@@ -4,13 +4,14 @@
 Assumes the arm is already at home (e.g. BT joint home after /pick).
 Sequence:
   1. Optional settle
-  2. Cartesian down_right → pre_place container (YAML, no planar offset; octomap ON)
+  2. Transit: optional fixed joint path home → down_right → pre_place
+     (``container_transit_joint_waypoints.enabled``), else Cartesian (octomap ON)
   3. At pre_place: remove workspace_box collision (restore after MoveIt exit; avoids ACM / GetPlanningScene)
   4. Octomap OFF
   5. SDK connect → simple_admittance (tool-frame VC + F/T) until seated or timeout
   6. Open gripper → SDK get_position + position_move +Z lift (mm) → sdk_control cleanup
      + restart_controllers (same cleanup path as before — not test_place_admittance)
-  7. Octomap ON → re-add workspace_box → down_right → joint home
+  7. Octomap ON → re-add workspace_box → down_right (joint or Cartesian) → joint home
 
 Goal (JSON): optional overrides, e.g. ref_velocity, descent_force_threshold,
 admittance_max_distance, admittance_timeout_sec (see catalyst_execute_params.yaml).
@@ -32,6 +33,7 @@ from rclpy.node import Node
 from std_msgs.msg import String as StringMsg
 from catalyst_interfaces.action import ExecuteTask
 from catalyst_execute.actions.robot_container_utils import (
+    parse_container_joint_transit,
     pose_cfg_to_cartesian_dict,
     sdk_z_delta_position_move_cmd,
     workspace_box_restore_from_cfg,
@@ -101,6 +103,13 @@ class PlaceOnRobotActionServer(Node):
         self._workspace_box_remove_verify_pause_sec = float(
             cfg.get('workspace_box_remove_verify_pause_sec', 0.3))
         self._workspace_box_restore = workspace_box_restore_from_cfg(cfg)
+
+        self._joint_transit = parse_container_joint_transit(cfg)
+        _jt_raw = cfg.get('container_transit_joint_waypoints')
+        if isinstance(_jt_raw, dict) and _jt_raw.get('enabled') and self._joint_transit is None:
+            self.get_logger().warn(
+                'container_transit_joint_waypoints.enabled but joints_down_right / '
+                'joints_pre_container invalid — using Cartesian transit')
 
         self._cb_group = ReentrantCallbackGroup()
         self._svc = RobotServiceClients(self, self._cb_group)
@@ -223,9 +232,15 @@ class PlaceOnRobotActionServer(Node):
             pass
         self._restore_workspace_box_collision_if_removed()
         try:
-            dr = pose_cfg_to_cartesian_dict(self._down_right)
-            self._svc.move_cartesian_cmd(
-                dr, timeout=self._move_cartesian_timeout_sec)
+            if self._joint_transit:
+                self._svc.move_joints_deg(
+                    self._joint_transit['joints_down_right'],
+                    speed=self._joint_transit['speed'],
+                    timeout=self._move_cartesian_timeout_sec)
+            else:
+                dr = pose_cfg_to_cartesian_dict(self._down_right)
+                self._svc.move_cartesian_cmd(
+                    dr, timeout=self._move_cartesian_timeout_sec)
         except Exception:
             pass
         try:
@@ -281,26 +296,58 @@ class PlaceOnRobotActionServer(Node):
         self._svc.set_octomap_enabled(True)
         self._svc.clear_octomap()
 
-        self._feedback(goal_handle, 'TRANSIT', 'Moving to down_right')
-        move = self._svc.move_cartesian_cmd(
-            pose_cfg_to_cartesian_dict(self._down_right),
-            timeout=self._move_cartesian_timeout_sec)
-        if not move.get('success'):
-            goal_handle.abort()
-            return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
-        self._after_motion()
+        to = self._move_cartesian_timeout_sec
+        jt = self._joint_transit
+        if jt:
+            self._feedback(goal_handle, 'TRANSIT', 'Joint path: home')
+            move = self._svc.move_home(speed=self._joint_home_speed, timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
+            self._after_motion()
+            if self._canceled(goal_handle):
+                return self._result(False, 'CANCELED', 'Canceled')
+            self._feedback(goal_handle, 'TRANSIT', 'Joint path: down_right')
+            move = self._svc.move_joints_deg(
+                jt['joints_down_right'], speed=jt['speed'], timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
+            self._after_motion()
+            if self._canceled(goal_handle):
+                return self._result(False, 'CANCELED', 'Canceled')
+            self._feedback(
+                goal_handle, 'PRE_PLACE',
+                'Joint path: pre_place container (nominal)')
+            move = self._svc.move_joints_deg(
+                jt['joints_pre_container'], speed=jt['speed'], timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'PRE_PLACE_FAILED', move.get('message', ''))
+            self._after_motion()
+        else:
+            self._feedback(goal_handle, 'TRANSIT', 'Moving to down_right')
+            move = self._svc.move_cartesian_cmd(
+                pose_cfg_to_cartesian_dict(self._down_right),
+                timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'TRANSIT_FAILED', move.get('message', ''))
+            self._after_motion()
 
-        if self._canceled(goal_handle):
-            return self._result(False, 'CANCELED', 'Canceled')
+            if self._canceled(goal_handle):
+                return self._result(False, 'CANCELED', 'Canceled')
 
-        self._feedback(goal_handle, 'PRE_PLACE', 'Moving to pre_place container (nominal)')
-        move = self._svc.move_cartesian_cmd(
-            self._nominal_pre_place_cartesian_dict(),
-            timeout=self._move_cartesian_timeout_sec)
-        if not move.get('success'):
-            goal_handle.abort()
-            return self._result(False, 'PRE_PLACE_FAILED', move.get('message', ''))
-        self._after_motion()
+            self._feedback(
+                goal_handle, 'PRE_PLACE',
+                'Moving to pre_place container (nominal)')
+            move = self._svc.move_cartesian_cmd(
+                self._nominal_pre_place_cartesian_dict(),
+                timeout=to)
+            if not move.get('success'):
+                goal_handle.abort()
+                return self._result(False, 'PRE_PLACE_FAILED', move.get('message', ''))
+            self._after_motion()
 
         if self._canceled(goal_handle):
             return self._result(False, 'CANCELED', 'Canceled')
@@ -435,10 +482,17 @@ class PlaceOnRobotActionServer(Node):
         if self._canceled(goal_handle):
             return self._result(False, 'CANCELED', 'Canceled')
 
-        self._feedback(goal_handle, 'TRANSIT', 'Moving to down_right (exit path)')
-        move = self._svc.move_cartesian_cmd(
-            pose_cfg_to_cartesian_dict(self._down_right),
-            timeout=self._move_cartesian_timeout_sec)
+        self._feedback(goal_handle, 'TRANSIT', 'Exit: down_right')
+        to = self._move_cartesian_timeout_sec
+        if self._joint_transit:
+            move = self._svc.move_joints_deg(
+                self._joint_transit['joints_down_right'],
+                speed=self._joint_transit['speed'],
+                timeout=to)
+        else:
+            move = self._svc.move_cartesian_cmd(
+                pose_cfg_to_cartesian_dict(self._down_right),
+                timeout=to)
         self._after_motion()
         if not move.get('success'):
             goal_handle.abort()

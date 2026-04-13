@@ -42,6 +42,8 @@ class ComputePosesService(Node):
         self._correction_dx = float(cp.get('correction_dx', -3.0))
         self._correction_dy = float(cp.get('correction_dy', 3.0))
         self._correction_dz = float(cp.get('correction_dz', 5.0))
+        self._staged_place_position_correction = bool(
+            cp.get('staged_place_position_correction', True))
         self._default_cartesian_speed = float(
             cp.get('default_cartesian_speed', 0.1))
         self._position_move_speed = float(cp.get('position_move_speed', 5))
@@ -198,24 +200,43 @@ class ComputePosesService(Node):
             'straight_line': straight_line,
         }
 
+    def _position_move_cmd(self, x, y, z, roll, pitch, yaw):
+        return {
+            'action': 'position_move',
+            'x': float(x),
+            'y': float(y),
+            'z': float(z),
+            'roll': float(roll),
+            'pitch': float(pitch),
+            'yaw': float(yaw),
+            'speed': self._position_move_speed,
+            'tolerance': self._position_move_tolerance,
+        }
+
     def _compute_corrected_pose(self, cmd):
-        """Compute corrected SDK position_move command from corner response."""
+        """Compute corrected SDK position_move command(s) from corner response."""
         corner_pose = cmd.get('corner_pose')
         if not corner_pose:
             return {'success': False, 'message': 'No corner_pose in response'}
 
+        cx, cy, cz = corner_pose[0], corner_pose[1], corner_pose[2]
+        r, p, yaw = corner_pose[3], corner_pose[4], corner_pose[5]
+        dx, dy, dz = self._correction_dx, self._correction_dy, self._correction_dz
+
+        if self._staged_place_position_correction:
+            return {
+                'success': True,
+                'message': 'Staged correction: ΔZ then ΔX+ΔY',
+                'correction_moves': [
+                    self._position_move_cmd(cx, cy, cz + dz, r, p, yaw),
+                    self._position_move_cmd(cx + dx, cy + dy, cz + dz, r, p, yaw),
+                ],
+            }
+
         return {
             'success': True,
             'message': 'Corrected pose computed',
-            'action': 'position_move',
-            'x': corner_pose[0] + self._correction_dx,
-            'y': corner_pose[1] + self._correction_dy,
-            'z': corner_pose[2] + self._correction_dz,
-            'roll': corner_pose[3],
-            'pitch': corner_pose[4],
-            'yaw': corner_pose[5],
-            'speed': self._position_move_speed,
-            'tolerance': self._position_move_tolerance,
+            **self._position_move_cmd(cx + dx, cy + dy, cz + dz, r, p, yaw),
         }
 
 

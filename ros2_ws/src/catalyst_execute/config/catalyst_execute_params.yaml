@@ -39,7 +39,7 @@ compute_poses:
   service_name: "/compute_poses"
   gripper_pose_file: "gripper_pose.json"
   # Extra shift to pick TCP pose in link_base Z (m); negative = lower toward -Z in base
-  pick_grasp_offset_z_m: -0.007
+  pick_grasp_offset_z_m: -0.01
   # approach y = tag_y + offset (m); x,z,quat match pick/place; z also +pre_height like pre_pick/pre_place
   approach_tag_y_offset_m: -0.05
   pre_height: 0.05
@@ -49,6 +49,8 @@ compute_poses:
   correction_dx: -3.0
   correction_dy: 3.0
   correction_dz: 5.0
+  # After corner find: if true, apply correction_dz first (lift), then dx+dy at lifted Z
+  staged_place_position_correction: true
   default_cartesian_speed: 0.1
   position_move_speed: 5
   position_move_tolerance: 0.1
@@ -89,8 +91,8 @@ place_action_server:
   start_settle_sec: 0.8
   robot_phase_topic: "/robot_phase"
   phase_pub_queue_size: 10
-  default_contact_force_threshold: 1.0
-  default_corner_force_threshold: 2.0
+  default_contact_force_threshold: 0.75
+  default_corner_force_threshold: 1.5
   default_descent_force_threshold: 7.0
   default_descent_speed: -5.0
   default_search_speed: 0.003
@@ -134,36 +136,44 @@ robot_container_place_action_server:
     speed: 0.1
   # pre_place: TCP 5 cm above place_container (link_base), after down_right
   pre_place:
-    x: 0.17513
-    y: 0.018705
-    z: 0.129163
-    qx: 0.705947
-    qy: 0.707857
-    qz: 0.022498
-    qw: 0.008389
+    x: 0.175745
+    y: 0.0181
+    z: 0.130715
+    qx: 0.706895
+    qy: 0.707108
+    qz: 0.015328
+    qw: -0.007884
     speed: 0.1
   # place_container TCP (nominal); descent is SDK admittance from pre_place
   place_container:
-    x: 0.17513
-    y: 0.018705
-    z: 0.079163
-    qx: 0.705947
-    qy: 0.707857
-    qz: 0.022498
-    qw: 0.008389
+    x: 0.175745
+    y: 0.0181
+    z: 0.080715
+    qx: 0.706895
+    qy: 0.707108
+    qz: 0.015328
+    qw: -0.007884
     speed: 0.05
+  # Optional: fixed joint path home → down_right → pre_place (skips Cartesian IK on those segments).
+  # Record /joint_states position (deg) with arm at TCP poses matching down_right / pre_place; set enabled: true.
+  container_transit_joint_waypoints:
+    enabled: false
+    speed: 0.1
+    # Recorded at TCP poses matching down_right / pre_place (deg [j1..j6])
+    joints_down_right: [-55.9945, -7.1329, 2.0872, 177.8458, 85.5415, 181.3224]
+    joints_pre_container: [-64.7189, 26.7591, -49.4953, 27.4558, 112.3057, 189.6586]
   default_contact_force_threshold: 1.0
   default_corner_force_threshold: 1.0
-  default_descent_force_threshold: 5.0
+  default_descent_force_threshold: 7.0
   default_descent_speed: -5.0
   default_search_speed: 0.003
   default_ref_velocity: -0.005
   # simple_admittance (tool-frame VC + F/T); goal JSON can override ref_velocity / descent_force_threshold
   admittance_rate: 100.0
-  admittance_linear_gain: 0.005
-  admittance_force_deadzone: 1.0
+  admittance_linear_gain: 0.01
+  admittance_force_deadzone: 0.5
   admittance_max_linear_vel: 0.05
-  admittance_max_distance: 0.1
+  admittance_max_distance: 0.2
   admittance_compliant_axes: [0, 1, 1, 0, 0, 0]
   admittance_timeout_sec: 120.0
   sdk_cleanup_timeout_sec: 30.0
@@ -216,24 +226,30 @@ robot_container_pick_action_server:
     qz: 0.008891
     qw: -0.00655
     speed: 0.1
+  # Same semantics as robot_container_place_action_server (pre_pick TCP vs pre_place).
+  container_transit_joint_waypoints:
+    enabled: false
+    speed: 0.1
+    joints_down_right: [-55.9945, -7.1329, 2.0872, 177.8458, 85.5415, 181.3224]
+    joints_pre_container: [-64.7189, 26.7591, -49.4953, 27.4558, 112.3057, 189.6586]
   # Match robot_container_place pre_place / place_container (pick is inverse motion)
   pre_pick:
-    x: 0.17513
-    y: 0.018705
-    z: 0.129163
-    qx: 0.705947
-    qy: 0.707857
-    qz: 0.022498
-    qw: 0.008389
+    x: 0.175745
+    y: 0.0181
+    z: 0.130715
+    qx: 0.706895
+    qy: 0.707108
+    qz: 0.015328
+    qw: -0.007884
     speed: 0.1
   pick_pose:
-    x: 0.17513
-    y: 0.018705
-    z: 0.079163
-    qx: 0.705947
-    qy: 0.707857
-    qz: 0.022498
-    qw: 0.008389
+    x: 0.175745
+    y: 0.0181
+    z: 0.080715
+    qx: 0.706895
+    qy: 0.707108
+    qz: 0.015328
+    qw: -0.007884
     speed: 0.05
   workspace_collision_object_id: "workspace_box"
   # Verified via /scene_command list after each remove

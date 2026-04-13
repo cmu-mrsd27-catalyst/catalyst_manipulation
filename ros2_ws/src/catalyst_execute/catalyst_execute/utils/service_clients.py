@@ -132,8 +132,17 @@ class RobotServiceClients:
         self._log.info(f'<- {client.srv_name}: {resp.get("message", "")}')
         return resp
 
-    def move_home(self, speed=0.1):
-        return self.call_json(self._joint, {'pose': 'home', 'speed': speed})
+    def move_home(self, speed=0.1, timeout=60.0):
+        return self.call_json(
+            self._joint, {'pose': 'home', 'speed': speed}, timeout=timeout)
+
+    def move_joints_deg(self, joints_deg, speed=0.1, timeout=60.0):
+        """Joint-space move via /joint_command (six angles in degrees)."""
+        return self.call_json(
+            self._joint,
+            {'joints': [float(x) for x in joints_deg], 'speed': float(speed)},
+            timeout=timeout,
+        )
 
     def move_cartesian(self, x, y, z, qx, qy, qz, qw, speed=0.1,
                        keep_orientation=False, straight_line=False):
