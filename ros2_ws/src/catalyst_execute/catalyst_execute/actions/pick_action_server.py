@@ -246,7 +246,7 @@ class PickActionServer(Node):
 
         # Close-range segments: fresh octomap for collisions near the stand
         self._svc.set_octomap_enabled(True)
-        self._svc.clear_octomap()
+        #self._svc.clear_octomap()
 
         # Enable EEF bounds for close-range work (MoveIt-side)
         self._svc.set_eef_bounds(tag_pose)

@@ -20,7 +20,7 @@
     <Sequence name="init_minimal">
       <JsonService name="Home"
         service_name="/joint_command"
-        command='{"pose": "home", "speed": 0.1}'/>
+        command='{"pose": "home", "speed": 0.3}'/>
     </Sequence>
   </BehaviorTree>
 
@@ -42,7 +42,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -70,7 +70,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -93,7 +93,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -121,7 +121,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -149,7 +149,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -182,7 +182,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -210,7 +210,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -243,7 +243,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -266,14 +266,14 @@
           timeout_sec="300"/>
         <JsonService name="HomeAfterPick"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
         <TaskAction name="PlaceOnRobot"
           action_name="/place_on_robot"
           command='{}'
           timeout_sec="400"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -302,14 +302,14 @@
           timeout_sec="300"/>
         <JsonService name="HomeAfterPick"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
         <TaskAction name="PlaceOnRobot"
           action_name="/place_on_robot"
           command='{}'
           timeout_sec="400"/>
         <JsonService name="HomeBeforeReturn"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
         <!-- Phase 2: fresh tag + place_safe, then return plate to machine -->
         <TaskAction name="Explore2"
           action_name="/explore"
@@ -332,7 +332,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>
@@ -367,7 +367,7 @@
           timeout_sec="300"/>
         <JsonService name="HomeEnd"
           service_name="/joint_command"
-          command='{"pose": "home", "speed": 0.1}'/>
+          command='{"pose": "home", "speed": 0.3}'/>
       </Sequence>
     </ReactiveSequence>
   </BehaviorTree>

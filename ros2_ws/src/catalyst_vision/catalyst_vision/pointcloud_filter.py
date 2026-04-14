@@ -26,6 +26,7 @@ Usage:
 
 import os
 import struct
+import threading
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -195,6 +196,7 @@ class PointCloudFilter(Node):
         self.declare_parameter('voxel_size', cfg['voxel_size'])
         self.declare_parameter('max_range', cfg['max_range'])
         self.declare_parameter('qos_depth', cfg['qos_depth'])
+        self.declare_parameter('process_period_sec', 0.1)
 
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value
@@ -204,17 +206,51 @@ class PointCloudFilter(Node):
         self._std_mul = self.get_parameter('std_multiplier').value
         self._voxel = self.get_parameter('voxel_size').value
         self._max_range = self.get_parameter('max_range').value
+        period = float(self.get_parameter('process_period_sec').value)
+        if period <= 0:
+            period = 0.1
+
+        self._pending_lock = threading.Lock()
+        self._pending: PointCloud2 | None = None
 
         self._pub = self.create_publisher(PointCloud2, output_topic, qos_depth)
-        self.create_subscription(PointCloud2, input_topic, self._cb, qos_depth)
+        self.create_subscription(PointCloud2, input_topic, self._on_cloud, qos_depth)
+        self._timer = self.create_timer(period, self._process_latest)
 
         self.get_logger().info(
             f'PointCloud filter: {input_topic} -> {output_topic}  '
             f'k={self._k}, std_mul={self._std_mul}, '
-            f'voxel={self._voxel}m, max_range={self._max_range}m'
+            f'voxel={self._voxel}m, max_range={self._max_range}m, '
+            f'process_period={period}s'
         )
 
-    def _cb(self, msg: PointCloud2):
+    @staticmethod
+    def _snapshot_cloud(msg: PointCloud2) -> PointCloud2:
+        """Copy cloud payload; subscription callback must not retain the loaned message."""
+        out = PointCloud2()
+        out.header = msg.header
+        out.height = msg.height
+        out.width = msg.width
+        out.fields = list(msg.fields)
+        out.is_bigendian = msg.is_bigendian
+        out.point_step = msg.point_step
+        out.row_step = msg.row_step
+        out.is_dense = msg.is_dense
+        out.data = bytes(msg.data)
+        return out
+
+    def _on_cloud(self, msg: PointCloud2):
+        snap = self._snapshot_cloud(msg)
+        with self._pending_lock:
+            self._pending = snap
+
+    def _process_latest(self):
+        with self._pending_lock:
+            msg = self._pending
+            self._pending = None
+        if msg is None:
+            return
+
         points = pointcloud2_to_xyz_fast(msg)
         if len(points) == 0:
             return
@@ -249,9 +285,17 @@ class PointCloudFilter(Node):
 def main():
     rclpy.init()
     node = PointCloudFilter()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

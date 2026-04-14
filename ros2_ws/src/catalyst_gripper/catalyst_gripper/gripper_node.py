@@ -240,8 +240,15 @@ def main(args=None):
         executor.spin()
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        # SIGINT may already have called rcl_shutdown via rclpy's signal handler;
+        # avoid RCLError from double shutdown and skip destroy if context is gone.
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
