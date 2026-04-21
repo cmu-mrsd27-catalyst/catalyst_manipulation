@@ -70,7 +70,7 @@ class PlaceOnRobotActionServer(Node):
         self._admittance_max_distance = float(
             cfg.get('admittance_max_distance', 0.1))
         self._admittance_compliant_axes = list(
-            cfg.get('admittance_compliant_axes', [0, 1, 1, 0, 0, 0]))
+            cfg.get('admittance_compliant_axes', [1, 1, 0, 0, 0, 0]))
         self._admittance_timeout_sec = float(
             cfg.get('admittance_timeout_sec', 120.0))
         self._sdk_cleanup_timeout_sec = float(

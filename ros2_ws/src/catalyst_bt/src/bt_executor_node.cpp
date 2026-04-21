@@ -94,6 +94,7 @@ int main(int argc, char** argv)
                 {"pick_place_with_detect", "MainPickPlaceWithDetect"},
                 {"place_pick_with_detect", "MainPlacePickWithDetect"},
                 {"demo_orchestration", "MainDemoOrchestration"},
+                {"demo_orchestration_2", "MainDemoOrchestration2"},
                 {"pick_container_then_place_on_robot", "MainPickContainerThenPlaceOnRobot"},
             };
 
@@ -104,7 +105,7 @@ int main(int argc, char** argv)
                     {"message", "Unknown task. Use: pick_only | place_only | pick_place | place_pick | "
                                 "pick_then_place_on_robot | pick_from_robot_container | "
                                 "pick_only_with_detect | place_only_with_detect | pick_place_with_detect | "
-                                "place_pick_with_detect | demo_orchestration | "
+                                "place_pick_with_detect | demo_orchestration | demo_orchestration_2 | "
                                 "pick_container_then_place_on_robot"},
                     {"task", task},
                 }.dump();

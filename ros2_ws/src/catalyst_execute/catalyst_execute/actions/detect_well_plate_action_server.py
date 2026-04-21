@@ -2,20 +2,27 @@
 """Well-plate detection action server (ExecuteTask).
 
 Moves the TCP to a viewpoint calibrated from tag frame (same idea as pick/place),
-captures a camera frame, POSTs it to the remote GPU detection server, and returns
-pick/place safety flags from the server.
+captures a camera frame, POSTs it to the remote GPU detection server, then (unless
+``skip_motion``) moves the arm to **joint home**, then to **approach_pick_pre** when
+``require`` is ``pick_safe`` and the server reports **pick_safe**. There is no
+post-detect approach-place motion (arm stays at home for container-pick then place).
+**Success** follows ``require``: ``pick_safe`` gates on **pick_safe** only;
+``place_safe`` gates on **place_safe** only. Returns pick/place safety flags from the server.
 
 Goal (JSON):
   tag_pose: required unless skip_motion is true — {position: {x,y,z},
             orientation: {qx,qy,qz,qw}} in link_base (e.g. merged from explore_result)
   skip_motion: optional bool — if true, skip cartesian move (use current camera view)
-  require: optional string — omit | \"pick_safe\" | \"place_safe\" | \"both\"
+  require: optional string — omit | \"pick_safe\" | \"place_safe\"
+            Gates success on that flag only (no combined pick+place check).
             If set, success is false when the corresponding server flag is false
             (action still completes HTTP; BT sees success: false).
 
 Result (JSON):
   success: bool — motion + HTTP ok and passes \"require\" checks
-  error_code: string — e.g. MOTION_FAILED, DETECTION_HTTP_FAILED, PICK_UNSAFE
+  error_code: string — e.g. MOTION_FAILED, POST_DETECT_HOME_FAILED,
+            POST_DETECT_POSE_FAILED, POST_DETECT_APPROACH_FAILED,
+            DETECTION_HTTP_FAILED, PICK_UNSAFE
   message: string
   pick_safe, place_safe: bool (from server pick_place)
   detection: optional object — full server JSON when inference succeeded
@@ -68,6 +75,10 @@ class DetectWellPlateActionServer(Node):
         self._fresh_image_wait_sec = float(cfg.get('fresh_image_wait_sec', 3.0))
         self._default_move_speed = float(cfg.get('default_move_speed', 0.1))
         self._jpeg_quality = int(cfg.get('jpeg_quality', 90))
+        self._post_detect_home_speed = float(cfg.get('post_detect_home_speed', 0.3))
+        self._joint_move_timeout_sec = float(cfg.get('joint_move_timeout_sec', 60.0))
+        self._compute_poses_timeout_sec = float(
+            cfg.get('compute_poses_timeout_sec', 10.0))
 
         tcp_cal = cfg.get('calibration_tcp_pose')
         tag_cal = cfg.get('calibration_tag_pose_in_base')
@@ -215,7 +226,18 @@ class DetectWellPlateActionServer(Node):
             return r
 
         skip_motion = bool(cmd.get('skip_motion', False))
-        require = cmd.get('require', '') or ''
+        require = (cmd.get('require', '') or '').strip()
+        if require not in ('', 'pick_safe', 'place_safe'):
+            goal_handle.abort()
+            r = ExecuteTask.Result()
+            r.response = json.dumps({
+                'success': False,
+                'error_code': 'BAD_GOAL',
+                'message': (
+                    f'require must be omit, pick_safe, or place_safe (got {require!r})'
+                ),
+            })
+            return r
         tag_pose = cmd.get('tag_pose')
         move_speed = float(cmd.get('speed', self._default_move_speed))
 
@@ -239,13 +261,18 @@ class DetectWellPlateActionServer(Node):
                 })
                 return r
 
-        if not self._svc.wait_for_services(names=['cartesian'], timeout=30.0):
+        needed_svcs = ['cartesian']
+        if not skip_motion:
+            needed_svcs = ['cartesian', 'joint', 'octomap']
+            if require == 'pick_safe':
+                needed_svcs.append('compute_poses')
+        if not self._svc.wait_for_services(names=needed_svcs, timeout=30.0):
             goal_handle.abort()
             r = ExecuteTask.Result()
             r.response = json.dumps({
                 'success': False,
                 'error_code': 'SERVICES_UNAVAILABLE',
-                'message': '/cartesian_command not available',
+                'message': f'Required services not available: {needed_svcs}',
             })
             return r
 
@@ -321,15 +348,94 @@ class DetectWellPlateActionServer(Node):
         elif require == 'place_safe':
             ok_require = place_safe
             err_code = 'PLACE_UNSAFE' if not place_safe else ''
-        elif require == 'both':
-            ok_require = pick_safe and place_safe
-            if not ok_require:
-                if not pick_safe and not place_safe:
-                    err_code = 'PICK_AND_PLACE_UNSAFE'
-                elif not pick_safe:
-                    err_code = 'PICK_UNSAFE'
-                else:
-                    err_code = 'PLACE_UNSAFE'
+
+        if not skip_motion:
+            self._feedback(goal_handle, 'POST_DETECT_HOME', 'Joint home after detection')
+            hm = self._svc.move_home(
+                speed=self._post_detect_home_speed,
+                timeout=self._joint_move_timeout_sec,
+            )
+            if not hm.get('success'):
+                self._publish_phase('IDLE')
+                goal_handle.abort()
+                r = ExecuteTask.Result()
+                r.response = json.dumps({
+                    'success': False,
+                    'error_code': 'POST_DETECT_HOME_FAILED',
+                    'message': hm.get('message', 'joint home failed'),
+                    'pick_safe': pick_safe,
+                    'place_safe': place_safe,
+                    'detection': det,
+                })
+                return r
+
+            if self._motion_settle_sec > 0.0:
+                time.sleep(self._motion_settle_sec)
+
+            do_pick_approach = require == 'pick_safe' and pick_safe
+
+            if do_pick_approach:
+                self._svc.set_octomap_enabled(False)
+                cr = self._svc.compute_poses(
+                    {'tag_pose': tag_pose},
+                    timeout=self._compute_poses_timeout_sec,
+                )
+                if not cr.get('success'):
+                    self._publish_phase('IDLE')
+                    goal_handle.abort()
+                    r = ExecuteTask.Result()
+                    r.response = json.dumps({
+                        'success': False,
+                        'error_code': 'POST_DETECT_POSE_FAILED',
+                        'message': cr.get('message', 'compute_poses tag_pose failed'),
+                        'pick_safe': pick_safe,
+                        'place_safe': place_safe,
+                        'detection': det,
+                    })
+                    return r
+
+                self._feedback(
+                    goal_handle, 'POST_DETECT_APPROACH',
+                    'Cartesian to approach_pick_pre after home',
+                )
+                pose_cmd = self._svc.compute_poses(
+                    {'query': 'approach_pick_pre'},
+                    timeout=self._compute_poses_timeout_sec,
+                )
+                if not pose_cmd.get('success'):
+                    self._publish_phase('IDLE')
+                    goal_handle.abort()
+                    r = ExecuteTask.Result()
+                    r.response = json.dumps({
+                        'success': False,
+                        'error_code': 'POST_DETECT_POSE_FAILED',
+                        'message': pose_cmd.get('message', 'compute_poses query failed'),
+                        'pick_safe': pick_safe,
+                        'place_safe': place_safe,
+                        'detection': det,
+                    })
+                    return r
+
+                pose_cmd['speed'] = float(
+                    cmd.get('post_detect_approach_speed', self._default_move_speed))
+                mv = self._svc.move_cartesian_cmd(
+                    pose_cmd, timeout=self._move_cartesian_timeout_sec)
+                if not mv.get('success'):
+                    self._publish_phase('IDLE')
+                    goal_handle.abort()
+                    r = ExecuteTask.Result()
+                    r.response = json.dumps({
+                        'success': False,
+                        'error_code': 'POST_DETECT_APPROACH_FAILED',
+                        'message': mv.get('message', 'approach cartesian failed'),
+                        'pick_safe': pick_safe,
+                        'place_safe': place_safe,
+                        'detection': det,
+                    })
+                    return r
+
+                if self._motion_settle_sec > 0.0:
+                    time.sleep(self._motion_settle_sec)
 
         msg = (
             f'pick_safe={pick_safe} place_safe={place_safe} '

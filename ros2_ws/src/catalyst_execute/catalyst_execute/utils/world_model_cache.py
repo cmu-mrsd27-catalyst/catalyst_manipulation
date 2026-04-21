@@ -42,3 +42,38 @@ class WorldModelCache:
             self._node.get_logger().info('[Gripper] already closed — skip close')
             return
         svc.gripper('close')
+
+    def pick_grasp_verified(
+        self,
+        enabled: bool,
+        max_finger_opening_m: float | None,
+    ) -> bool:
+        """True if a pick grasp looks successful from latest /world_model gripper block.
+
+        When ``enabled`` is False, always returns True (caller skips retry logic).
+
+        With real ``gripper_node`` data: success if ``is_grasping`` is true, otherwise
+        failure if fingers are still too open (``position_meters`` above threshold)
+        or contact was not detected.
+
+        If ``source`` is not ``gripper_node`` (sim / joint_states fallback), returns
+        True so pick does not Z-retry without contact sensing.
+        """
+        if not enabled:
+            return True
+        if not self._world:
+            return True
+        g = self._world.get('gripper') or {}
+        if g.get('source') != 'gripper_node':
+            return True
+        if g.get('is_grasping'):
+            return True
+        pm = g.get('position_meters')
+        if (
+            max_finger_opening_m is not None
+            and pm is not None
+            and float(pm) > float(max_finger_opening_m)
+        ):
+            return False
+        # Contact not detected (e.g. miss in Z) — includes fully closed on air.
+        return False

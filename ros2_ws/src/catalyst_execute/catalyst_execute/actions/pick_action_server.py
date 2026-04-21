@@ -3,19 +3,20 @@
 
 Handles the full pick sequence:
   1. Compute poses from tag
-  2. Approach pick (octomap off for long transit from explore; then octomap on + clear)
-  3. Pre-pick (octomap on, EEF bounds)
-  4. Open gripper
-  5. Pick descent (slow, octomap off)
-  6. Guide mode — manual adjustment (optional)
-  7. Close gripper
-  8. Retract to pre-pick → approach (octomap on)
+  2. Approach pick (octomap off for long transit from explore); close gripper at approach
+  3. Octomap on + clear + EEF bounds; pre-pick; open gripper at pre-pick
+  4. Pick descent (slow, octomap off), optional guide, close gripper
+  5. If grasp verify fails (world model / finger opening), retract to pre-pick and
+     repeat descent with TCP Z lowered by ``pick_z_retry_step_m`` per retry (YAML).
+  6. Disable guide mode when used
+  7. Retract to pre-pick → approach (octomap on)
 
-Leaves the arm at the approach_pick pose.
+Leaves the arm at the approach_pick pose after a successful run.
 
 Goal (JSON):
   tag_pose: {position: {x,y,z}, orientation: {qx,qy,qz,qw}}
   use_guide_mode: bool (default true)
+  grasp_verify_enabled: optional bool (overrides YAML for this goal)
 
 Timing (catalyst_execute_params.yaml → pick_action_server):
   start_settle_sec — before first motion; motion_settle_sec — after each cartesian execute.
@@ -75,6 +76,14 @@ class PickActionServer(Node):
         # After BT joint "home" (or any prior move), brief pause before first
         # cartesian so MoveIt start state matches the real arm.
         self._start_settle_sec = float(cfg.get('start_settle_sec', 0.8))
+        self._grasp_verify_enabled = bool(cfg.get('grasp_verify_enabled', True))
+        self._grasp_verify_settle_sec = float(cfg.get('grasp_verify_settle_sec', 0.2))
+        self._pick_z_retry_step_m = float(cfg.get('pick_z_retry_step_m', 0.01))
+        self._pick_z_retry_max_attempts = int(cfg.get('pick_z_retry_max_attempts', 3))
+        raw_max_open = cfg.get('grasp_max_finger_opening_m', 0.028)
+        self._grasp_max_finger_opening_m = (
+            float(raw_max_open) if raw_max_open is not None else None
+        )
 
         self._cb_group = ReentrantCallbackGroup()
         self._svc = RobotServiceClients(self, self._cb_group)
@@ -228,7 +237,8 @@ class PickActionServer(Node):
         self._feedback(goal_handle, 'APPROACHING', 'Moving to approach pick')
 
         pose_cmd = self._svc.compute_poses(
-            {'query': 'approach_pick_pre'}, timeout=self._compute_poses_timeout_sec)
+            {'query': 'approach_pick_pre'},
+            timeout=self._compute_poses_timeout_sec)
         if not pose_cmd.get('success'):
             goal_handle.abort()
             return self._result(False, 'POSE_QUERY_FAILED', pose_cmd.get('message', ''))
@@ -244,9 +254,19 @@ class PickActionServer(Node):
             self._cleanup(guide_was_enabled)
             return self._result(False, 'CANCELED', 'Canceled')
 
+        self._feedback(
+            goal_handle, 'CLOSING_GRIPPER_AT_APPROACH',
+            'Close gripper at approach_pick_pre')
+        self._svc.gripper('close')
+        time.sleep(self._sleep_after_close_gripper_sec)
+
+        if self._canceled(goal_handle):
+            self._cleanup(guide_was_enabled)
+            return self._result(False, 'CANCELED', 'Canceled')
+
         # Close-range segments: fresh octomap for collisions near the stand
         self._svc.set_octomap_enabled(True)
-        #self._svc.clear_octomap()
+        # self._svc.clear_octomap()
 
         # Enable EEF bounds for close-range work (MoveIt-side)
         self._svc.set_eef_bounds(tag_pose)
@@ -271,67 +291,112 @@ class PickActionServer(Node):
             self._cleanup(guide_was_enabled)
             return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 4. Open gripper ---
-        self._feedback(goal_handle, 'OPENING_GRIPPER')
-        self._wmc.gripper_open_if_needed(self._svc)
+        self._feedback(
+            goal_handle, 'OPENING_GRIPPER',
+            'Open gripper at pre-pick')
+        self._svc.gripper('open')
         time.sleep(self._sleep_after_open_gripper_sec)
 
         if self._canceled(goal_handle):
             self._cleanup(guide_was_enabled)
             return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 5. Pick descent (slow, octomap off) ---
-        self._feedback(goal_handle, 'PICKING', 'Descending to pick pose')
-        self._svc.set_octomap_enabled(False)
+        # --- 5–7. Pick descent, optional guide, close — with Z retry if grasp not verified ---
+        grasp_verify = bool(
+            cmd.get('grasp_verify_enabled', self._grasp_verify_enabled))
+        max_open = self._grasp_max_finger_opening_m
+        z_extra_m = 0.0
+        max_pick_attempts = max(1, int(self._pick_z_retry_max_attempts))
 
-        pose_cmd = self._svc.compute_poses(
-            {'query': 'pick'}, timeout=self._compute_poses_timeout_sec)
-        if not pose_cmd.get('success'):
-            self._cleanup(guide_was_enabled)
-            goal_handle.abort()
-            return self._result(False, 'POSE_QUERY_FAILED', pose_cmd.get('message', ''))
+        for pick_attempt in range(max_pick_attempts):
+            if pick_attempt > 0:
+                z_extra_m += self._pick_z_retry_step_m
+                self._feedback(
+                    goal_handle, 'GRASP_RETRY',
+                    f'Grasp not verified — retry pick (ΔZ = −{z_extra_m * 1000:.0f} mm vs nominal), '
+                    f'attempt {pick_attempt + 1}/{max_pick_attempts}')
+                if guide_was_enabled:
+                    self._feedback(goal_handle, 'DISABLING_GUIDE_MODE')
+                    self._svc.guide_mode('disable')
+                    guide_was_enabled = False
+                    time.sleep(self._post_guide_settle_sec)
+                self._feedback(goal_handle, 'RETRY_PRE_PICK', 'Moving to pre-pick before re-descent')
+                pose_cmd = self._svc.compute_poses(
+                    {'query': 'pre_pick'}, timeout=self._compute_poses_timeout_sec)
+                if pose_cmd.get('success'):
+                    pose_cmd['speed'] = pick_speed
+                    self._svc.move_cartesian_cmd(
+                        pose_cmd, timeout=self._move_timeout_sec)
+                self._after_motion()
+                self._feedback(goal_handle, 'OPENING_GRIPPER', 'Opening before pick retry')
+                self._svc.gripper('open')
+                time.sleep(self._sleep_after_open_gripper_sec)
+                if self._canceled(goal_handle):
+                    self._cleanup(guide_was_enabled)
+                    return self._result(False, 'CANCELED', 'Canceled')
 
-        pose_cmd['speed'] = pick_speed
-        move = self._svc.move_cartesian_cmd(
-            pose_cmd, timeout=self._move_timeout_sec)
-        if not move.get('success'):
-            self._cleanup(guide_was_enabled)
-            goal_handle.abort()
-            return self._result(False, 'PICK_DESCENT_FAILED', move.get('message', ''))
-        self._after_motion()
+            self._feedback(goal_handle, 'PICKING', 'Descending to pick pose')
+            self._svc.set_octomap_enabled(False)
 
-        if self._canceled(goal_handle):
-            self._cleanup(guide_was_enabled)
-            return self._result(False, 'CANCELED', 'Canceled')
+            pose_cmd = self._svc.compute_poses(
+                {'query': 'pick'}, timeout=self._compute_poses_timeout_sec)
+            if not pose_cmd.get('success'):
+                self._cleanup(guide_was_enabled)
+                goal_handle.abort()
+                return self._result(False, 'POSE_QUERY_FAILED', pose_cmd.get('message', ''))
 
-        # --- 6. Guide mode (optional) ---
-        if use_guide_mode:
-            self._feedback(goal_handle, 'GUIDE_MODE',
-                           'Guide mode enabled — adjust grasp manually')
-            for attempt in range(self._guide_mode_max_retries):
-                resp = self._svc.guide_mode('enable')
-                if resp.get('success'):
-                    guide_was_enabled = True
-                    break
-                self.get_logger().warn(
-                    f'Guide mode enable attempt {attempt + 1} failed, retrying...')
-                time.sleep(self._guide_mode_retry_sleep_sec)
-            time.sleep(self._guide_mode_settle_sec)
+            pose_cmd['z'] = float(pose_cmd['z']) - z_extra_m
+            pose_cmd['speed'] = pick_speed
+            move = self._svc.move_cartesian_cmd(
+                pose_cmd, timeout=self._move_timeout_sec)
+            if not move.get('success'):
+                self._cleanup(guide_was_enabled)
+                goal_handle.abort()
+                return self._result(False, 'PICK_DESCENT_FAILED', move.get('message', ''))
+            self._after_motion()
 
-        if self._canceled(goal_handle):
-            self._cleanup(guide_was_enabled)
-            return self._result(False, 'CANCELED', 'Canceled')
+            if self._canceled(goal_handle):
+                self._cleanup(guide_was_enabled)
+                return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 7. Close gripper ---
-        self._feedback(goal_handle, 'CLOSING_GRIPPER', 'Grasping object')
-        self._wmc.gripper_close_if_needed(self._svc)
-        time.sleep(self._sleep_after_close_gripper_sec)
+            # Guide only on first pick attempt (retries are automated Z correction).
+            if use_guide_mode and pick_attempt == 0:
+                self._feedback(goal_handle, 'GUIDE_MODE',
+                               'Guide mode enabled — adjust grasp manually')
+                for attempt in range(self._guide_mode_max_retries):
+                    resp = self._svc.guide_mode('enable')
+                    if resp.get('success'):
+                        guide_was_enabled = True
+                        break
+                    self.get_logger().warn(
+                        f'Guide mode enable attempt {attempt + 1} failed, retrying...')
+                    time.sleep(self._guide_mode_retry_sleep_sec)
+                time.sleep(self._guide_mode_settle_sec)
 
-        if self._canceled(goal_handle):
-            self._cleanup(guide_was_enabled)
-            return self._result(False, 'CANCELED', 'Canceled')
+            if self._canceled(goal_handle):
+                self._cleanup(guide_was_enabled)
+                return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 8. Disable guide mode ---
+            self._feedback(goal_handle, 'CLOSING_GRIPPER', 'Grasping object')
+            self._wmc.gripper_close_if_needed(self._svc)
+            time.sleep(self._sleep_after_close_gripper_sec)
+            if self._grasp_verify_settle_sec > 0.0:
+                time.sleep(self._grasp_verify_settle_sec)
+
+            if self._canceled(goal_handle):
+                self._cleanup(guide_was_enabled)
+                return self._result(False, 'CANCELED', 'Canceled')
+
+            if self._wmc.pick_grasp_verified(grasp_verify, max_open):
+                break
+
+            if pick_attempt >= max_pick_attempts - 1:
+                self._cleanup(guide_was_enabled)
+                goal_handle.abort()
+                return self._result(
+                    False, 'GRASP_VERIFY_FAILED',
+                    'Grasp not verified after pick attempts with Z offsets')
+
         if use_guide_mode and guide_was_enabled:
             self._feedback(goal_handle, 'DISABLING_GUIDE_MODE')
             self._svc.guide_mode('disable')
@@ -342,7 +407,7 @@ class PickActionServer(Node):
             self._cleanup(guide_was_enabled)
             return self._result(False, 'CANCELED', 'Canceled')
 
-        # --- 9. Retract to pre-pick ---
+        # --- 8. Retract to pre-pick (after verified grasp) ---
         self._feedback(goal_handle, 'RETRACTING', 'Retracting to pre-pick')
         pose_cmd = self._svc.compute_poses(
             {'query': 'pre_pick'}, timeout=self._compute_poses_timeout_sec)

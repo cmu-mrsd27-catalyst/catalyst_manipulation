@@ -18,5 +18,5 @@ world_model_node:
     health.check_robot_state: false
     health.check_controllers: false
     health.check_octomap: true
-    health.check_collision_force: true
+    health.check_collision_force: false
     health.check_joint_temperature: false

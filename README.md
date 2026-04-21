@@ -122,9 +122,10 @@ ros2 service call /bt_execute catalyst_interfaces/srv/JsonCommand \
 | `pick_from_robot_container` | `MainPickFromRobotContainer` | Pick from robot-side container |
 | `pick_only_with_detect` | `MainPickOnlyWithDetect` | Explore → detect (`require: pick_safe`) → pick → home |
 | `place_only_with_detect` | `MainPlaceOnlyWithDetect` | Explore → detect (`require: place_safe`) → place → home |
-| `pick_place_with_detect` | `MainPickPlaceWithDetect` | Explore → detect (`require: both`) → pick → place → home |
-| `place_pick_with_detect` | `MainPlacePickWithDetect` | Explore → detect (`require: both`) → place → pick → home |
+| `pick_place_with_detect` | `MainPickPlaceWithDetect` | Explore → detect (`require: pick_safe`) → pick → place → home |
+| `place_pick_with_detect` | `MainPlacePickWithDetect` | Explore → detect (`require: place_safe`) → place → pick → home |
 | `demo_orchestration` | `MainDemoOrchestration` | Full demo: vision+pick machine → `place_on_robot` → home → vision+`place_safe` → pick container → `place` on machine → home |
+| `demo_orchestration_2` | `MainDemoOrchestration2` | explore + detect `place_safe` (empty hand) → `pick_from_robot_container` → `place` → home → explore + detect `pick_safe` → `pick` → home → `place_on_robot` → home |
 | `pick_container_then_place_on_robot` | `MainPickContainerThenPlaceOnRobot` | `/pick_from_robot_container` (retract, MoveIt, `down_right`, home) then `/place_on_robot` (transit to `pre_place`, SDK admittance, release, restart, home) |
 
 Requires the corresponding action servers to be running (including `/place_on_robot` and `/pick_from_robot_container` where those flows appear). Vision tasks (including **`demo_orchestration`**) also need **`detect_well_plate_action_server`**, camera streaming, and the GPU detection HTTP server.
