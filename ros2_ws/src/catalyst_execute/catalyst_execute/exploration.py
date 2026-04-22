@@ -22,6 +22,109 @@ import time
 from catalyst_interfaces.srv import JsonCommand
 
 from catalyst_execute.utils.execute_config import section
+from catalyst_execute.utils.pose_math import head_on_tcp_command_for_tag
+
+
+def read_fresh_tag_pose(
+        world_model_getter,
+        tag_frame,
+        t_cutoff,
+        timeout_sec,
+        logger=None,
+):
+    """Wait for a ``/world_model`` message newer than *t_cutoff*, return tag pose or None."""
+    deadline = time.monotonic() + float(timeout_sec)
+
+    while time.monotonic() < deadline:
+        ts, wm = world_model_getter()
+        if wm is None or ts is None:
+            time.sleep(0.02)
+            continue
+        if ts < t_cutoff:
+            time.sleep(0.02)
+            continue
+        for tag in wm.get('apriltags', []):
+            if (tag['frame'] == tag_frame
+                    and tag.get('pose_in_base') is not None):
+                return tag['pose_in_base']
+        return None
+
+    if logger is not None:
+        logger.warn('Timed out waiting for fresh world_model message')
+    return None
+
+
+def run_refine_head_on_view(
+        node,
+        service_clients,
+        world_model_getter,
+        tag_frame,
+        coarse_tag_pose,
+        *,
+        distance_m,
+        axis_sign,
+        move_speed,
+        settle_sec,
+        cartesian_timeout_sec,
+        fresh_read_timeout_sec,
+        world_up=(0.0, 0.0, 1.0),
+        tool_axis_toward_tag='plus_x',
+        post_rotate_tcp_x_deg=0.0,
+):
+    """After coarse sweep: MoveIt TCP head-on to tag; re-read pose from ``/world_model``.
+
+    Returns:
+        Updated tag pose dict, or *coarse_tag_pose* if motion or re-read fails.
+    """
+    logger = node.get_logger()
+    try:
+        cmd = head_on_tcp_command_for_tag(
+            coarse_tag_pose,
+            distance_m,
+            axis_sign=axis_sign,
+            world_up=tuple(world_up),
+            tool_axis_toward_tag=tool_axis_toward_tag,
+            post_rotate_tcp_x_deg=float(post_rotate_tcp_x_deg),
+        )
+        cmd['speed'] = float(move_speed)
+        try:
+            service_clients.set_octomap_enabled(False)
+        except Exception as exc:
+            logger.warn(f'Explore refine: octomap off failed ({exc}); continuing')
+
+        move = service_clients.move_cartesian_cmd(
+            cmd, timeout=float(cartesian_timeout_sec))
+        if not move.get('success'):
+            logger.warn(
+                'Explore refine: head-on cartesian move failed: '
+                f'{move.get("message", "")}')
+            try:
+                service_clients.set_octomap_enabled(True)
+            except Exception:
+                pass
+            return coarse_tag_pose
+
+        time.sleep(float(settle_sec))
+        t_cut = node.get_clock().now().nanoseconds / 1e9
+        updated = read_fresh_tag_pose(
+            world_model_getter,
+            tag_frame,
+            t_cut,
+            fresh_read_timeout_sec,
+            logger,
+        )
+        try:
+            service_clients.set_octomap_enabled(True)
+        except Exception:
+            pass
+        return updated if updated is not None else coarse_tag_pose
+    except Exception as exc:
+        logger.warn(f'Explore refine: exception ({exc}); using coarse tag pose')
+        try:
+            service_clients.set_octomap_enabled(True)
+        except Exception:
+            pass
+        return coarse_tag_pose
 
 
 def _exploration_defaults():
@@ -125,7 +228,13 @@ class TagExplorer:
             # Record cutoff time *after* settling
             t_cutoff = self._node.get_clock().now().nanoseconds / 1e9
 
-            tag_pose = self._read_fresh_tag(t_cutoff)
+            tag_pose = read_fresh_tag_pose(
+                self._get_world_model,
+                self._tag_frame,
+                t_cutoff,
+                self._fresh_read_timeout,
+                logger,
+            )
             if tag_pose is not None:
                 logger.info(
                     f'Tag "{self._tag_frame}" found at joint1 = {j1:.1f} deg'
@@ -164,31 +273,10 @@ class TagExplorer:
         return resp.get('success', False)
 
     def _read_fresh_tag(self, t_cutoff):
-        """Wait until a world_model message newer than t_cutoff arrives,
-        then check it for the target tag.
-
-        Returns:
-            pose dict with 'position' and 'orientation', or None.
-        """
-        deadline = time.monotonic() + self._fresh_read_timeout
-
-        while time.monotonic() < deadline:
-            ts, wm = self._get_world_model()
-            if wm is None or ts is None:
-                time.sleep(0.02)
-                continue
-            if ts < t_cutoff:
-                time.sleep(0.02)
-                continue
-            # This message arrived after we settled — trust it
-            for tag in wm.get('apriltags', []):
-                if (tag['frame'] == self._tag_frame
-                        and tag.get('pose_in_base') is not None):
-                    return tag['pose_in_base']
-            # Fresh message arrived but tag not in it — not visible here
-            return None
-
-        self._node.get_logger().warn(
-            'Timed out waiting for fresh world_model message'
+        return read_fresh_tag_pose(
+            self._get_world_model,
+            self._tag_frame,
+            t_cutoff,
+            self._fresh_read_timeout,
+            self._node.get_logger(),
         )
-        return None

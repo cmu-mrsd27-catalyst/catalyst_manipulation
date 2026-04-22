@@ -39,7 +39,7 @@ compute_poses:
   service_name: "/compute_poses"
   gripper_pose_file: "gripper_pose.json"
   # Extra shift to pick TCP pose in link_base Z (m); negative = lower toward -Z in base
-  pick_grasp_offset_z_m: -0.005
+  pick_grasp_offset_z_m: 0.000
   # approach y = tag_y + offset (m); x,z,quat match pick/place; z also +pre_height like pre_pick/pre_place
   approach_tag_y_offset_m: -0.05
   pre_height: 0.05
@@ -165,11 +165,11 @@ robot_container_place_action_server:
   # Optional: fixed joint path home → down_right → pre_place (skips Cartesian IK on those segments).
   # Record /joint_states position (deg) with arm at TCP poses matching down_right / pre_place; set enabled: true.
   container_transit_joint_waypoints:
-    enabled: false
+    enabled: true
     speed: 0.2
     # Recorded at TCP poses matching down_right / pre_place (deg [j1..j6])
     joints_down_right: [-55.9945, -7.1329, 2.0872, 177.8458, 85.5415, 181.3224]
-    joints_pre_container: [-64.7189, 26.7591, -49.4953, 27.4558, 112.3057, 189.6586]
+    joints_pre_container: [-52.5118, 34.1676, -62.5354, 39.0838, 114.7395, 196.9865]
   default_contact_force_threshold: 1.0
   default_corner_force_threshold: 1.25
   default_descent_force_threshold: 10.0
@@ -207,7 +207,7 @@ robot_container_place_action_server:
   workspace_box_remove_verify_pause_sec: 0.3
   workspace_box_restore_collision:
     frame_id: link_base
-    position: [0.175, 0.0, 0.04]
+    position: [0.27, 0.0, 0.04]
     orientation: [0.0, 0.0, 0.0, 1.0]
     dimensions: [0.14, 0.10, 0.08]
 
@@ -237,28 +237,28 @@ robot_container_pick_action_server:
     speed: 0.2
   # Same semantics as robot_container_place_action_server (pre_pick TCP vs pre_place).
   container_transit_joint_waypoints:
-    enabled: false
+    enabled: true
     speed: 0.3
     joints_down_right: [-55.9945, -7.1329, 2.0872, 177.8458, 85.5415, 181.3224]
-    joints_pre_container: [-64.7189, 26.7591, -49.4953, 27.4558, 112.3057, 189.6586]
+    joints_pre_container: [-52.5118, 34.1676, -62.5354, 39.0838, 114.7395, 196.9865]
   # Match robot_container_place pre_place / place_container (pick is inverse motion)
   pre_pick:
-    x: 0.175745
-    y: 0.0181
-    z: 0.130715
-    qx: 0.706895
-    qy: 0.707108
-    qz: 0.015328
-    qw: -0.007884
+    x: 0.276263
+    y: 0.01821
+    z: 0.126793
+    qx: 0.700496
+    qy: 0.71347
+    qz: 0.014747
+    qw: -0.006937
     speed: 0.2
   pick_pose:
-    x: 0.175745
-    y: 0.0181
-    z: 0.080715
-    qx: 0.706895
-    qy: 0.707108
-    qz: 0.015328
-    qw: -0.007884
+    x: 0.276263
+    y: 0.01821
+    z: 0.076793
+    qx: 0.700496
+    qy: 0.71347
+    qz: 0.014747
+    qw: -0.006937
     speed: 0.05
   workspace_collision_object_id: "workspace_box"
   # Verified via /scene_command list after each remove
@@ -267,7 +267,7 @@ robot_container_pick_action_server:
   # Removed from scene after pre_pick, re-added after retract (sync with planning_scene_static_objects.yaml)
   workspace_box_restore_collision:
     frame_id: link_base
-    position: [0.175, 0.0, 0.04]
+    position: [0.27, 0.0, 0.04]
     orientation: [0.0, 0.0, 0.0, 1.0]
     dimensions: [0.14, 0.10, 0.08]
 
@@ -281,6 +281,23 @@ explore_action_server:
   joint_service_wait_sec: 10.0
   default_tag_frame: "tag_liquid_handler"
   default_move_speed: 0.3
+  # After coarse joint1 sweep finds the tag: MoveIt TCP to ~head-on standoff, then re-read pose.
+  refine_head_on_after_coarse: true
+  refine_standoff_distance_m: 0.20
+  # Tag Z axis in link_base: flip sign if refine drives into the table vs away.
+  refine_tag_axis_sign: 1.0
+  # Which link_tcp axis points from TCP toward the tag (camera line-of-sight).
+  # If standoff is correct but the arm looks "past" the tag (90° off), try
+  # plus_x / minus_x / plus_y / minus_y / plus_z / minus_z until head-on.
+  refine_tool_axis_toward_tag: "plus_x"
+  # Extra rotation in TCP frame about +X_tcp (deg). Use 180 if head-on but image flipped about TCP X.
+  refine_post_rotate_tcp_x_deg: 180.0
+  refine_world_up: [0.0, 0.0, 1.0]
+  refine_move_speed: 0.25
+  refine_settle_sec: 0.6
+  refine_cartesian_timeout_sec: 60.0
+  refine_fresh_read_timeout_sec: 2.0
+  refine_service_wait_sec: 10.0
   # When true, after a successful sweep the action result uses testing_tag_pose_in_base
   # instead of the pose from /world_model (for approach-pick / compute_poses testing).
   testing_override_tag_pose_after_explore: false

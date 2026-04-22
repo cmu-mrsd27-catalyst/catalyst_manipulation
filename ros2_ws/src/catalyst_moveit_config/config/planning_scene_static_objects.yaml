@@ -8,6 +8,6 @@ link_base_boxes:
       y: 0.10   # along base Y
       z: 0.08   # height (base Z)
     position:
-      x: 0.175
+      x: 0.27
       y: 0.0
       z: 0.04

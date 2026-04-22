@@ -7,7 +7,7 @@ def workspace_box_restore_from_cfg(cfg: dict) -> dict:
     """Geometry to re-add workspace_box after remove (default = planning_scene_static_objects)."""
     default = {
         'frame_id': 'link_base',
-        'position': [0.175, 0.0, 0.04],
+        'position': [0.27, 0.0, 0.04],
         'dimensions': [0.14, 0.10, 0.08],
         'orientation': [0.0, 0.0, 0.0, 1.0],
     }
