@@ -1,5 +1,11 @@
 # Catalyst Manipulation (ROS 2 Jazzy)
 
+> **Moved (2026-09-08):** active development and the Jetson deployment now live in the
+> team workspace [`fvd-catalyst`](https://github.com/cmu-mrsd27-catalyst/fvd-catalyst)
+> under `src/manipulation/` (branch `manipulation` until merged). This repository is kept
+> as the laptop reference and for the Gazebo simulation, which the Jetson image does not
+> include. New changes should go to `fvd-catalyst`.
+
 Workspace for the **Catalyst Manipulator**: xArm-6, Bio Gripper, MoveIt 2, AprilTag vision, behavior-tree orchestration, and force-assisted placement.
 
 The ROS 2 workspace lives under **`ros2_ws/`**.
