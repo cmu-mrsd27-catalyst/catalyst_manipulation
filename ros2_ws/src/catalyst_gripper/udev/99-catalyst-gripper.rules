@@ -1,0 +1,4 @@
+# Stable device name for the Bio Gripper's U2D2 (FTDI FT232H) adapter.
+# Install on the host:  sudo cp 99-catalyst-gripper.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+# Then /dev/catalyst_gripper -> ttyUSBn regardless of enumeration order.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", ATTRS{serial}=="FTAU52EC", SYMLINK+="catalyst_gripper", MODE="0666"

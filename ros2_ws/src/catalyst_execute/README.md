@@ -31,8 +31,7 @@ These are **not** started by `demo.launch.py`; run alongside bringup when using 
 | Command | Purpose |
 |---------|---------|
 | `guide_mode` | Interactive teach / joint / Cartesian CLI |
-| `pick_and_place` | Monolithic test node (see source) |
-| `test_*`, `plot_*`, `sdk_admittance`, `ft_data_collection` | Development and experiments |
+| `test_torque_placement`, `test_eef_bounds_viz`, `sdk_admittance` | Development and experiments |
 
 Use `ros2 pkg executables catalyst_execute` for the full list.
 

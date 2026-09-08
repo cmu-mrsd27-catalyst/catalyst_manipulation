@@ -18,6 +18,7 @@ find_package(shape_msgs REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
+find_package(xarm_sdk REQUIRED)
 
 add_executable(motion_planner src/motion_planner_node.cpp)
 target_compile_features(motion_planner PUBLIC cxx_std_17)
@@ -31,15 +32,9 @@ ament_target_dependencies(
   std_srvs
   moveit_msgs
   controller_manager_msgs
+  xarm_sdk  # xArm C++ SDK (guide/teach mode, collision sensitivity)
 )
-# xArm SDK (for guide/teach mode)
-target_include_directories(motion_planner PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/../external/xarm_ros2/xarm_sdk/cxx/include
-)
-target_link_libraries(motion_planner
-  nlohmann_json::nlohmann_json
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../install/xarm_sdk/lib/libxarm_cxx_sdk.so
-)
+target_link_libraries(motion_planner nlohmann_json::nlohmann_json)
 
 add_executable(scene_manager src/scene_manager_node.cpp)
 target_compile_features(scene_manager PUBLIC cxx_std_17)

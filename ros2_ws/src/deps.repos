@@ -4,11 +4,6 @@ repositories:
     url: https://github.com/xArm-Developer/xarm_ros2.git
     version: jazzy
     recursive: true
-  external/realsense-ros:
-    type: git
-    url: https://github.com/IntelRealSense/realsense-ros.git
-    version: 4.56.4
-    recursive: true
   external/apriltag:
     type: git
     url: https://github.com/AprilRobotics/apriltag.git

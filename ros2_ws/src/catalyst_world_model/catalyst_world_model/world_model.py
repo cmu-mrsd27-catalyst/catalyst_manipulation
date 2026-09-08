@@ -10,7 +10,6 @@ including phase-aware system health status.
 import json
 import math
 import os
-import time
 
 import rclpy
 import yaml
@@ -116,15 +115,6 @@ _WORLD_MODEL_PARAM_DEFAULTS = {
     'health.check_joint_temperature': False,
 }
 
-def _debug_ndjson_paths():
-    """Docker-friendly: default /tmp; optional host-mounted file via CATALYST_DEBUG_LOG."""
-    paths = ['/tmp/catalyst_debug_24326a.ndjson']
-    extra = os.environ.get('CATALYST_DEBUG_LOG', '').strip()
-    if extra:
-        paths.insert(0, extra)
-    return paths
-
-
 def _load_share_yaml_ros_params():
     """Return (ros__parameters dict, path used).
 
@@ -157,38 +147,6 @@ def _load_share_yaml_ros_params():
         except Exception:
             continue
     return {}, fallback
-
-
-def _agent_dbg_log(
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict,
-    run_id: str = 'pre-fix',
-) -> None:
-    # #region agent log
-    line = (
-        json.dumps(
-            {
-                'sessionId': '24326a',
-                'runId': run_id,
-                'hypothesisId': hypothesis_id,
-                'location': location,
-                'message': message,
-                'data': data,
-                'timestamp': int(time.time() * 1000),
-            },
-            default=str,
-        )
-        + '\n'
-    )
-    for _p in _debug_ndjson_paths():
-        try:
-            with open(_p, 'a', encoding='utf-8') as _df:
-                _df.write(line)
-        except Exception:
-            pass
-    # #endregion
 
 
 class WorldModel(Node):
@@ -229,21 +187,6 @@ class WorldModel(Node):
             + ', '.join(f'{k}={self.get_parameter(k).value}' for k in sorted(health_keys))
         )
 
-        _pv = self.get_parameter('health.check_ft_sensor').value
-        _agent_dbg_log(
-            'H2',
-            'world_model.py:__init__',
-            'after share yaml overlay + declare',
-            {
-                'share_yaml_path': share_yaml_path,
-                'overlay_key_count': len(overlay_keys),
-                'health.check_ft_sensor_raw': _pv,
-                'health.check_ft_sensor_type': type(_pv).__name__,
-                'health_enabled_ft': self._health_enabled('health.check_ft_sensor'),
-                'fully_qualified_name': self.get_fully_qualified_name(),
-            },
-            run_id='post-fix',
-        )
 
         robot_ip = self.get_parameter('robot_ip').value
         ft_ip = self.get_parameter('ft_sensor_ip').value
@@ -673,43 +616,6 @@ class WorldModel(Node):
         # Overall healthy = all checks pass
         healthy = all(c['ok'] for c in checks.values())
 
-        # #region agent log
-        if not getattr(self, '_wm_dbg_health_once', False):
-            self._wm_dbg_health_once = True
-            _agent_dbg_log(
-                'H3',
-                'world_model.py:_build_system_health:first',
-                'first tick health snapshot',
-                {
-                    'phase': phase,
-                    'healthy': healthy,
-                    'ft_check': checks.get('ft_sensor'),
-                    'param_raw': self.get_parameter('health.check_ft_sensor').value,
-                    'health_enabled_ft': self._health_enabled(
-                        'health.check_ft_sensor'),
-                },
-            )
-        if not healthy:
-            ft_c = checks.get('ft_sensor', {})
-            if (not ft_c.get('ok', True) and not ft_c.get('disabled', False)):
-                now_ms = int(time.time() * 1000)
-                last = getattr(self, '_wm_dbg_bad_ft_ts', 0)
-                if now_ms - last > 3000:
-                    self._wm_dbg_bad_ft_ts = now_ms
-                    _agent_dbg_log(
-                        'H5',
-                        'world_model.py:_build_system_health:bad_ft',
-                        'ft_sensor failing while reported unhealthy',
-                        {
-                            'ft_check': ft_c,
-                            'param_raw': self.get_parameter(
-                                'health.check_ft_sensor').value,
-                            'health_enabled_ft': self._health_enabled(
-                                'health.check_ft_sensor'),
-                            'phase': phase,
-                        },
-                    )
-        # #endregion
 
         return {
             'healthy': healthy,

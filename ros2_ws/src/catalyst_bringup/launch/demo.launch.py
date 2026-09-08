@@ -13,12 +13,10 @@ Usage:
 """
 
 import copy
-import json
 import os
 import re
 import subprocess
 import sys
-import time
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
@@ -476,7 +474,6 @@ def generate_launch_description():
             'config',
             'world_model.yaml',
         )
-    _wm_load_err = None
     try:
         with open(_wm_yaml, 'r', encoding='utf-8') as _wm_f:
             _wm_doc = yaml.safe_load(_wm_f) or {}
@@ -484,47 +481,12 @@ def generate_launch_description():
             (_wm_doc.get('world_model_node') or {}).get('ros__parameters') or {}
         )
     except Exception as _wm_err:
-        _wm_load_err = str(_wm_err)
         print(
             f'[catalyst_bringup] WARNING: could not load world_model.yaml for '
             f'world_model_node (using code defaults only): {_wm_err}',
             file=sys.stderr,
         )
 
-    # #region agent log
-    _dbg_line = (
-        json.dumps(
-            {
-                'sessionId': '24326a',
-                'runId': 'pre-fix',
-                'hypothesisId': 'H1',
-                'location': 'demo.launch.py:world_model_params',
-                'message': 'launch yaml load for world_model_node',
-                'data': {
-                    'yaml_path': _wm_yaml,
-                    'load_error': _wm_load_err,
-                    'health.check_ft_sensor_in_dict': wm_ros_params.get(
-                        'health.check_ft_sensor', '__MISSING__'
-                    ),
-                    'param_keys_count': len(wm_ros_params),
-                },
-                'timestamp': int(time.time() * 1000),
-            },
-            default=str,
-        )
-        + '\n'
-    )
-    _dbg_paths = ['/tmp/catalyst_debug_24326a.ndjson']
-    _dbg_extra = os.environ.get('CATALYST_DEBUG_LOG', '').strip()
-    if _dbg_extra:
-        _dbg_paths.insert(0, _dbg_extra)
-    for _dbg_p in _dbg_paths:
-        try:
-            with open(_dbg_p, 'a', encoding='utf-8') as _dbg_f:
-                _dbg_f.write(_dbg_line)
-        except Exception:
-            pass
-    # #endregion
 
     world_model_node = Node(
         package='catalyst_world_model',
